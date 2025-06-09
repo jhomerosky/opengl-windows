@@ -59,6 +59,7 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 }
 
 void normalize_mesh_to_unit_box(Mesh& mesh) {
+	float factor = .96;
 	float min_x = FLT_MAX, max_x = -FLT_MAX;
 	float min_y = FLT_MAX, max_y = -FLT_MAX;
 	float min_z = FLT_MAX, max_z = -FLT_MAX;
@@ -78,7 +79,7 @@ void normalize_mesh_to_unit_box(Mesh& mesh) {
 	float center_x = (min_x + max_x) / 2.0f;
 	float center_y = (min_y + max_y) / 2.0f;
 	float center_z = (min_z + max_z) / 2.0f;
-	float scale = 2.0f / std::max(std::max(max_x - min_x, max_y - min_y), max_z - min_z);
+	float scale = factor * 2.0f / std::max(std::max(max_x - min_x, max_y - min_y), max_z - min_z);
 
 	// Recenter and scale vertices
 	for (size_t i = 0; i < mesh.num_vertices; ++i) {
@@ -237,7 +238,7 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
 
 int initMesh(Mesh& mesh) {
 	// build mesh
-	const char* filename = "resources/teapot2.obj";
+	const char* filename = "resources/guy.obj";
 	if (!malloc_mesh_from_obj_file(filename, &mesh)) { fprintf(stderr, "Failed to malloc the mesh\n"); return -1; } 
 
 	if (mesh.vertices == nullptr) {
