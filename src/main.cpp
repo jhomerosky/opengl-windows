@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <stdlib.h>
@@ -9,6 +10,8 @@
 #include <algorithm>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <cmath>
 
 
 struct Vertex {
@@ -40,7 +43,9 @@ void initOpenGL() {
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	//glfwSwapInterval(0); // disable vsync
+	glfwSwapInterval(0); // disable vsync
+
+	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 }
 
 // ==== MATH LIBRARY ====
@@ -58,8 +63,9 @@ void normalize_mesh_to_unit_box(Mesh& mesh) {
 	float min_y = FLT_MAX, max_y = -FLT_MAX;
 	float min_z = FLT_MAX, max_z = -FLT_MAX;
 
+	float* p;
 	for (size_t i = 0; i < mesh.num_vertices; ++i) {
-		float* p = mesh.vertices[i].pos;
+		p = mesh.vertices[i].pos;
 		if (p[0] < min_x) min_x = p[0];
 		if (p[0] > max_x) max_x = p[0];
 		if (p[1] < min_y) min_y = p[1];
@@ -78,7 +84,7 @@ void normalize_mesh_to_unit_box(Mesh& mesh) {
 	for (size_t i = 0; i < mesh.num_vertices; ++i) {
 		mesh.vertices[i].pos[0] = (mesh.vertices[i].pos[0] - center_x) * scale;
 		mesh.vertices[i].pos[1] = (mesh.vertices[i].pos[1] - center_y) * scale;
-		mesh.vertices[i].pos[2] = (mesh.vertices[i].pos[2] - center_z) * scale - 1.0f;
+		mesh.vertices[i].pos[2] = (mesh.vertices[i].pos[2] - center_z) * scale;
 	}
 }
 
@@ -90,7 +96,6 @@ int malloc_mesh_from_obj_file(const char* filename, Mesh* mesh) {
 	char buf[2048];
 	FILE* file = fopen(filename, "r");
 	while (fgets(buf, 2048, file) != NULL) {
-		//printf("%s", buf);
 		if (buf[0] == '\0' || buf[0] == '#') continue;
 		if (buf[0] == 'v' && buf[1] == ' ') ++num_vertices;
 		if (buf[0] == 'f') ++num_faces;
@@ -120,9 +125,14 @@ int malloc_mesh_from_obj_file(const char* filename, Mesh* mesh) {
 		}
 		if (buf[0] == 'f') {
 			if (sscanf(buf, "f %u//%u %u//%u %u//%u", &v[0], &n[0], &v[1], &n[1], &v[2], &n[2]) == 6) {
-				mesh->faces[f_index].vertexId[0] = v[0];
-				mesh->faces[f_index].vertexId[1] = v[1];
-				mesh->faces[f_index].vertexId[2] = v[2];
+				mesh->faces[f_index].vertexId[0] = v[0] - 1;
+				mesh->faces[f_index].vertexId[1] = v[1] - 1;
+				mesh->faces[f_index].vertexId[2] = v[2] - 1;
+				++f_index;
+			} else if (sscanf(buf, "f %u %u %u", &v[0], &v[1], &v[2]) == 3) {
+				mesh->faces[f_index].vertexId[0] = v[0] - 1;
+				mesh->faces[f_index].vertexId[1] = v[1] - 1;
+				mesh->faces[f_index].vertexId[2] = v[2] - 1;
 				++f_index;
 			}
 		}
@@ -167,6 +177,7 @@ int malloc_mesh_from_random(Mesh* mesh) {
 void print_mesh_to_stdout(const Mesh& mesh) {
 	printf("Printing mesh:\n");
 	if (mesh.vertices == nullptr) { printf("The mesh is uninitialized\n"); }
+
 	for (int i = 0; i < mesh.num_vertices; i++) {
 		printf("V[%d] = [ \n", i);
 		printf("  pos { ");
@@ -182,8 +193,6 @@ void print_mesh_to_stdout(const Mesh& mesh) {
 
 	printf("End mesh printing.\n");
 }
-
-
 
 GLuint compileShader(GLenum type, const char* source) {
     GLuint shader = glCreateShader(type);
@@ -228,7 +237,7 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
 
 int initMesh(Mesh& mesh) {
 	// build mesh
-	const char* filename = "resources/teapot.obj";
+	const char* filename = "resources/teapot2.obj";
 	if (!malloc_mesh_from_obj_file(filename, &mesh)) { fprintf(stderr, "Failed to malloc the mesh\n"); return -1; } 
 
 	if (mesh.vertices == nullptr) {
@@ -244,12 +253,6 @@ int initMesh(Mesh& mesh) {
 
 int main(int argc, char** argv) {	
 	srand(time(NULL));
-	// handle input args
-	int _FPS_COUNTER_ = 0;
-	for (int i = 1; i < argc; i++) {
-		// enable fps counter
-		if (strcmp(argv[i], "-fps") == 0) _FPS_COUNTER_ = 1;
-	}
 
 	// init glfw
     if (!glfwInit()) { fprintf(stderr, "Failed to initialize GLFW\n"); return -1; }
@@ -280,20 +283,25 @@ int main(int argc, char** argv) {
 	double lastTime = glfwGetTime();
 	double currTime;
 	unsigned int frameCount = 0;
-	int FRAMES_TO_COUNT = 50;
+	int FRAMES_TO_COUNT = 60;
+	float fps;
+	char title[512];
+	
+    const char* glVersion = (const char*)glGetString(GL_VERSION);
+    const char* glRenderer = (const char*)glGetString(GL_RENDERER);
 
 	// Define VAO, VBO, EBO
 	GLuint VAO, VBO, EBO;
 
-	// Generate and bind VAO
+	// Generate and bind VAO (Vertex Array Object)
 	glGenVertexArrays(1, &VAO);
 	glBindVertexArray(VAO);
 
-	// Generate and bind VBO
+	// Generate and bind VBO (Vertex Buffer Object)
 	glGenBuffers(1, &VBO);
 	glBindBuffer(GL_ARRAY_BUFFER, VBO);
 
-	// Generate and bind EBO
+	// Generate and bind EBO (Element Buffer Object)
 	glGenBuffers(1, &EBO);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
 
@@ -313,9 +321,12 @@ int main(int argc, char** argv) {
 		#version 330 core
 		layout(location = 0) in vec3 position;
 		layout(location = 1) in vec3 color;
+
+		uniform mat4 transform;
+
 		out vec3 vertexColor;
 		void main() {
-			gl_Position = vec4(position, 1.0);
+			gl_Position = transform * vec4(position, 1.0);
 			vertexColor = color;
 		}
 	)";
@@ -339,6 +350,12 @@ int main(int argc, char** argv) {
 		// Bind the VAO (restores all attribute and buffer settings)
 		glBindVertexArray(VAO);
 
+		// Update the scene
+		float angle_radians = glfwGetTime() * M_PI * 0.25f;
+		glm::mat4 model = glm::rotate(glm::mat4(1.0f), angle_radians, glm::vec3(0.0f, 1.0f, 0.0f));
+		unsigned int transformLoc = glGetUniformLocation(shaderProgram, "transform");
+		glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(model));
+
 		// Issue a draw call
 		glDrawElements(GL_TRIANGLES, mesh.num_faces * 3, GL_UNSIGNED_INT, 0);
 		glUseProgram(shaderProgram);
@@ -349,11 +366,14 @@ int main(int argc, char** argv) {
 		
 		// fps counter implementation
 		frameCount = (frameCount + 1) % FRAMES_TO_COUNT;
-		if (frameCount == 0 && _FPS_COUNTER_) {
+		if (!frameCount) {
 		    lastTime = currTime;
             currTime = glfwGetTime();
-			printf("fps=%.1f\n", FRAMES_TO_COUNT / (currTime - lastTime));
+			fps = FRAMES_TO_COUNT / (currTime - lastTime);
+			snprintf(title, sizeof(title), "GLFW OpenGL - [FPS: %.2f] - %s - %s", fps, glVersion, glRenderer);
 		}
+		glfwSetWindowTitle(window, title);
+
 	} // end main render loop
 	
     glfwDestroyWindow(window);
