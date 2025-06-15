@@ -14,7 +14,7 @@
 
 #define __MAX_MESHES__ 2048
 
-// ===== BEGIN CUSTOM STRUCTS =====
+// ===== CUSTOM STRUCTS =====
 struct Vertex {
 	float pos[3];
 	float color[3];
@@ -48,8 +48,10 @@ struct Camera {
 
 	float pitch = 0;
 	float yaw = -90.0f;
-
 	float speed = 0;
+
+	float TOP_SPEED;
+	float NORMAL_SPEED;
 };
 
 struct MouseInfo {
@@ -78,7 +80,7 @@ struct Scene {
 // ===== END CUSTOM STRUCTS =====
 
 
-// ===== BEGIN GLOBAL VARS =====
+// ===== GLOBAL VARS =====
 Scene global_scene;
 
 // ===== END GLOBAL VARS =====
@@ -87,9 +89,16 @@ Scene global_scene;
 // ===== MATH FUNCTIONS =====
 float randf() { return (float)2 * (rand() - RAND_MAX/2) / RAND_MAX; }
 int isNumber(const char *str) { if (str == NULL || *str == '\0') return 0; char* end; strtol(str, &end, 10); return *end == '\0'; }
+glm::vec3 cross3f_to_vec3(float *v1, float *v2) {
+	float res[3];
+	for (int i = 0; i < 3; i++) {
+		res[i] = (v1[(i+1) % 3]*v2[(i+2) % 3]) - (v1[(i+2) % 3]*v2[(i+1) % 3]);
+	} 
+	return glm::vec3(res[0], res[1], res[2]);
+}
 // ===== END MATH FUNCTIONS =====
 
-// ===== BEGIN CALLBACK FUNCTIONS =====
+// ===== CALLBACK FUNCTIONS =====
 // function to execute when the window is resized
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 	glViewport(0, 0, width, height);
@@ -134,24 +143,30 @@ void print_mesh_to_stdout(const Mesh& mesh) {
 	printf("Printing mesh:\n");
 	if (mesh.vertices == nullptr) { printf("The mesh is uninitialized\n"); }
 
-	for (int i = 0; i < mesh.num_vertices; i++) {
-		printf("V[%d] = [ \n", i);
-		printf("  pos { ");
-		for (int j = 0; j < 3; j++) { printf("%.4f ", mesh.vertices[i].pos[j]); }
-		printf("}\n  color { ");
-		for (int j = 0; j < 3; j++) { printf("%.4f ", mesh.vertices[i].color[j]); }
-		printf("}\n  normal { ");
-		for (int j = 0; j < 3; j++) { printf("%.4f ", mesh.vertices[i].normal[j]); }
-		printf("} ]\n");
-	}
+	
+	// for (int i = 0; i < mesh.num_vertices; i++) {
+	// 	printf("V[%d] = [ \n", i);
+	// 	printf("  pos { ");
+	// 	for (int j = 0; j < 3; j++) { printf("%.4f ", mesh.vertices[i].pos[j]); }
+	// 	printf("}\n  color { ");
+	// 	for (int j = 0; j < 3; j++) { printf("%.4f ", mesh.vertices[i].color[j]); }
+	// 	printf("}\n  normal { ");
+	// 	for (int j = 0; j < 3; j++) { printf("%.4f ", mesh.vertices[i].normal[j]); }
+	// 	printf("} ]\n");
+	// }
 
 	for (int i = 0; i < mesh.num_faces; i++) {
 		printf("F[%d] = [ %d | %d | %d ]\n", i, mesh.faces[i].vertexId[0], mesh.faces[i].vertexId[1], mesh.faces[i].vertexId[2]);
 	}
+
+	printf("num_vertices=%d\n", mesh.num_vertices);
+	printf("num_faces=%d\n", mesh.num_faces);
+
 	if (mesh.has_normals)
 		printf("Normal vectors found.\n");
 	else
 		printf("Normal vectors NOT found.\n");
+
 	printf("End mesh printing.\n");
 }
 
@@ -191,9 +206,52 @@ void normalize_mesh_to_unit_box(Mesh& mesh) {
 	}
 }
 
+// @Assuming: CCW face orientation
+// @Assuming: faces are triangles
+// MUTATES the mesh vertex list
+int compute_and_store_vector_normals(Mesh* mesh) {
+	// for each face:
+	// e1 = v2 - v1, e2 = v3 - v2
+	// fnormal = normalize(cross(e1, e2))
+	// assign this normal to all vertices in this face
+	// build new vertex list from unique pairs of v, vnormal
+
+	float e1[3];
+	float e2[3];
+	glm::vec3 fnormal;
+	float diff[3];
+	
+	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces);
+	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list\n"); return -1; }
+
+	for (int i = 0; i < mesh->num_faces; i++) {
+		for (int j = 0; j < 3; j++) {
+			e1[j] = mesh->vertices[mesh->faces[i].vertexId[1]].pos[j] - mesh->vertices[mesh->faces[i].vertexId[0]].pos[j];
+			e2[j] = mesh->vertices[mesh->faces[i].vertexId[2]].pos[j] - mesh->vertices[mesh->faces[i].vertexId[1]].pos[j]; 
+		}
+		// cross product will not be near 0 because we are using edges of a triangle
+		fnormal = glm::normalize(cross3f_to_vec3(e1, e2));
+		for (int j = 0; j < 3; j++) {
+			new_vertex_list[i * 3 + j] = mesh->vertices[mesh->faces[i].vertexId[j]];
+			for (int k = 0; k < 3; k++) {
+				// TODO: need unique pairs of vertices and normals
+				// for each vn computed (= num faces), store each (of 3) vertices with vn in new list of size 3*num_faces
+				new_vertex_list[i*3 + j].normal[k] = fnormal[k];
+			}
+			mesh->faces[i].vertexId[j] = i*3 + j;
+		}
+	}
+	free(mesh->vertices);
+	mesh->vertices = new_vertex_list;
+	mesh->num_vertices = 3 * mesh->num_faces;
+	mesh->has_normals = true;
+
+	return 0;
+}
+
 // @Assuming: vertex_normal[i] = vertex[i] for all i
-int malloc_mesh_from_obj_file(const char* filename, Mesh* mesh) {
-	if (mesh->vertices != nullptr) { return 0; }
+int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
+	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
 	size_t num_vertices = 0;
 	size_t num_faces = 0;
 	size_t num_vnormals = 0;
@@ -257,7 +315,7 @@ int malloc_mesh_from_obj_file(const char* filename, Mesh* mesh) {
 
 	if (v_index != num_vertices || f_index != num_faces || (vnormals_enabled && vn_index != num_vnormals)) { 
 		fprintf(stderr, "Failed to read .obj file\n");
-		return -1;
+		return 0;
 	}
 
 	mesh->num_vertices = num_vertices;
@@ -266,7 +324,7 @@ int malloc_mesh_from_obj_file(const char* filename, Mesh* mesh) {
 	return 1;
 }
 
-int malloc_mesh_from_random(Mesh* mesh) {
+int malloc_mesh_fields_from_random(Mesh* mesh) {
 	float color_palette[5][3] = {
 		{1.0f, 0.0f, 0.0f}, // red
 		{0.0f, 1.0f, 0.0f}, // green
@@ -344,14 +402,14 @@ int addMeshToGlobalScene(Mesh* mesh) {
 }
 
 // Upload the data to the GPU
-void uploadMeshBuffers(const Mesh& mesh) {
+void uploadMeshBuffers(const Mesh *mesh) {
 	// Upload vertex data
-	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(Vertex) * mesh.num_vertices, mesh.vertices, GL_STATIC_DRAW);
+	glBindBuffer(GL_ARRAY_BUFFER, mesh->VBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(Vertex) * mesh->num_vertices, mesh->vertices, GL_STATIC_DRAW);
 
 	// Upload index data
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.EBO);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * 3 * mesh.num_faces, mesh.faces, GL_STATIC_DRAW);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->EBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * 3 * mesh->num_faces, mesh->faces, GL_STATIC_DRAW);
 }
 
 void swapCursorInputMode(GLFWwindow* window) {
@@ -396,17 +454,23 @@ void processInput(GLFWwindow* window, float deltaTime) {
 
 	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS)
 		swapCursorInputMode(window);
+
+	if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+		camera->speed = camera->TOP_SPEED;
+	} else {
+		camera->speed = camera->NORMAL_SPEED;
+	}
 }
 
-void fillMeshWithColor(Mesh &mesh, glm::vec3 new_color) {
-	for (int i = 0; i < mesh.num_vertices; i++) {
+void fillMeshWithColor(Mesh *mesh, glm::vec3 new_color) {
+	for (int i = 0; i < mesh->num_vertices; i++) {
 		for (int j = 0; j < 3; j++) {
-			mesh.vertices[i].color[j] = new_color[j];
+			mesh->vertices[i].color[j] = new_color[j];
 		}
 	}
 }
 
-// ===== BEGIN INIT FUNCTIONS ===== 
+// ===== INIT FUNCTIONS ===== 
 // called before the loop 
 void initOpenGL() {
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -424,10 +488,12 @@ void initCamera(Camera& camera) {
 	camera.front = glm::vec3(0.0f, 0.0f, -1.0f);
 	camera.up    = glm::vec3(0.0f, 1.0f,  0.0f);
 	camera.speed = 5.0f;
+	camera.TOP_SPEED = 50.0f;
+	camera.NORMAL_SPEED = 5.0f;
 }
 
 void initLightSource(LightSource& lightSource) {
-	lightSource.pos = glm::vec3(5.0f, 5.0f, 5.0f);
+	lightSource.pos = glm::vec3(5.0f, 5.0f, 15.0f);
 	lightSource.color = glm::vec3(1.0f, 1.0f, 1.0f);
 }
 
@@ -441,13 +507,27 @@ void initMouseInfo(MouseInfo& mouse) {
 	mouse.modeSwitchCooldown = 0.1f;
 }
 
-int initMesh(Mesh& mesh) {
+int initMesh(Mesh* mesh) {
+	// init values
+	mesh->vertices = nullptr;
+	mesh->faces = nullptr;
+	mesh->num_vertices = 0;
+	mesh->num_faces = 0;
+	mesh->has_normals = false;
+
 	// Build mesh
 	const char* filename = "resources/teapot.obj";
-	if (!malloc_mesh_from_obj_file(filename, &mesh)) { fprintf(stderr, "Failed to malloc the mesh\n"); return -1; } 
+	if (!malloc_mesh_fields_from_obj_file(filename, mesh)) { fprintf(stderr, "Failed to malloc the mesh fields in malloc_mesh_fields_from_obj_file\n"); return -1; } 
 
-	if (mesh.vertices == nullptr) {
-		if (!malloc_mesh_from_random(&mesh)) { fprintf(stderr, "Failed to malloc the mesh\n"); return -1; }
+	if (mesh->vertices == nullptr) {
+		if (!malloc_mesh_fields_from_random(mesh)) { fprintf(stderr, "Failed to malloc the mesh fields in malloc_mesh_fields_from_random\n"); return -1; }
+	}
+
+	// if we couldn't load normnals from file, then compute them now
+	// @TODO: write normals back to file?
+	if (!mesh->has_normals) {
+		printf("Normals not found. Computing normals and rebuilding mesh.\n");
+		compute_and_store_vector_normals(mesh);
 	}
 
 	//normalize_mesh_to_unit_box(mesh);
@@ -459,14 +539,14 @@ int initMesh(Mesh& mesh) {
 	// Element Buffer Object (EBO): physical buffer of ordered vertex indices for rendering order
 	
 	// Generate objects
-	glGenVertexArrays(1, &mesh.VAO);
-	glGenBuffers(1, &mesh.VBO);
-	glGenBuffers(1, &mesh.EBO);
+	glGenVertexArrays(1, &(mesh->VAO));
+	glGenBuffers(1, &(mesh->VBO));
+	glGenBuffers(1, &(mesh->EBO));
 
 	// Bind objects
-	glBindVertexArray(mesh.VAO);
-	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.EBO);
+	glBindVertexArray(mesh->VAO);
+	glBindBuffer(GL_ARRAY_BUFFER, mesh->VBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->EBO);
 
 	// Configure vertex attributes
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0); // Position
@@ -489,7 +569,8 @@ void initGlobalScene() {
 }
 // ===== END INIT FUNCTIONS =====
 
-int main(int argc, char** argv) {	
+int main(int argc, char** argv) {
+	
 	srand(time(NULL));
 
 	// init glfw
@@ -516,19 +597,44 @@ int main(int argc, char** argv) {
 	initOpenGL();
 	initGlobalScene();
 
-	// mesh1
-	Mesh mesh1;
-	addMeshToGlobalScene(&mesh1);
-	initMesh(mesh1);
-	fillMeshWithColor(mesh1, glm::vec3(1.0, 0.0, 1.0));
-	uploadMeshBuffers(mesh1);
+	// // mesh1
+	// Mesh mesh1;
+	// addMeshToGlobalScene(&mesh1);
+	// initMesh(mesh1);
+	// fillMeshWithColor(mesh1, glm::vec3(1.0, 0.0, 0.0));
+	// uploadMeshBuffers(mesh1);
 	
-	// mesh2
-	Mesh mesh2;
-	addMeshToGlobalScene(&mesh2);
-	initMesh(mesh2);
-	fillMeshWithColor(mesh2, glm::vec3(0.0, 1.0, 0.0));
-	uploadMeshBuffers(mesh2);
+	// // mesh2
+	// Mesh mesh2;
+	// addMeshToGlobalScene(&mesh2);
+	// initMesh(mesh2);
+	// fillMeshWithColor(mesh2, glm::vec3(0.0, 1.0, 0.0));
+	// uploadMeshBuffers(mesh2);
+
+	// // mesh3
+	// Mesh mesh3;
+	// addMeshToGlobalScene(&mesh3);
+	// initMesh(mesh3);
+	// fillMeshWithColor(mesh3, glm::vec3(0.0, 0.0, 1.0));
+	// uploadMeshBuffers(mesh3);
+
+	// // mesh4
+	// Mesh mesh4;
+	// addMeshToGlobalScene(&mesh4);
+	// initMesh(mesh4);
+	// fillMeshWithColor(mesh4, glm::vec3(1.0, 1.0, 0.0));
+	// uploadMeshBuffers(mesh4);
+
+	int num_meshes = __MAX_MESHES__;
+	Mesh* meshpool[__MAX_MESHES__];
+	float eps = 1e-5;
+	for (int i = 0; i < num_meshes; i++) {
+		meshpool[i] = (Mesh*)malloc(sizeof(Mesh));
+		addMeshToGlobalScene(meshpool[i]);
+		initMesh(meshpool[i]);
+		fillMeshWithColor(meshpool[i], glm::normalize(eps + glm::vec3(rand(), rand(), rand())));
+		uploadMeshBuffers(meshpool[i]);
+	}
 	
 	// init vars for fps counter
 	float lastTime;
@@ -581,26 +687,32 @@ int main(int argc, char** argv) {
 		uniform vec3 lightPos;
 		uniform vec3 lightColor;
 		uniform vec3 viewPos;
+		uniform bool hasNormals;
 		
 		out vec4 color;
 		void main() {
 			// ambient lighting
 			float ambientStrength = 0.1;
 			vec3 ambient = ambientStrength * lightColor;
+			vec3 diffuse;
+			vec3 specular;
+			if (hasNormals) {
+				// diffuse lighting
+				vec3 norm = normalize(fragNormal);
+				vec3 lightDirection = normalize(lightPos - fragPosition);
+				float diff = max(dot(lightDirection, norm), 0.0f);
+				diffuse = diff * lightColor;
 
-			// diffuse lighting
-			vec3 norm = normalize(fragNormal);
-			vec3 lightDirection = normalize(lightPos - fragPosition);
-			float diff = max(dot(lightDirection, norm), 0.0f);
-			vec3 diffuse = diff * lightColor;
-
-			// specular lighting
-			float specularStrength = 0.5;
-			vec3 viewDirection = normalize(viewPos - fragPosition);
-			vec3 reflectDirection = reflect(-lightDirection, norm);
-			float spec = pow(max(dot(viewDirection, reflectDirection), 0.0), 32);
-    		vec3 specular = specularStrength * spec * lightColor;
-
+				// specular lighting
+				float specularStrength = 0.5;
+				vec3 viewDirection = normalize(viewPos - fragPosition);
+				vec3 reflectDirection = reflect(-lightDirection, norm);
+				float spec = pow(max(dot(viewDirection, reflectDirection), 0.0), 32);
+				specular = specularStrength * spec * lightColor;
+			} else {
+				diffuse = vec3(1.0);
+				specular = vec3(1.0);
+			}
 			// set the final color
 			color = vec4((ambient + diffuse + specular) * fragColor, 1.0);
 		}
@@ -634,7 +746,7 @@ int main(int argc, char** argv) {
 
 		// Build and upload the projection matrix to the shader
 		glfwGetFramebufferSize(window, &width, &height);
-		proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
+		proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000.0f);
 		unsigned int projLoc = glGetUniformLocation(shaderProgram, "proj");
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(proj));
 
@@ -663,10 +775,10 @@ int main(int argc, char** argv) {
 			// float scale = 0.10;
 			// model = glm::scale(glm::mat4(1.0f), scale * glm::vec3(1.0f, 1.0f, 1.0f));
 			// model = glm::translate(model, glm::vec3(0.0f, -10.0f, 0.0f));
-			float speed = glm::abs(glm::sin(0.2*i + 0.1));
+			float speed = glm::abs(glm::sin(0.2*i));
 			model = glm::mat4(1.0f);
-			model = glm::translate(model, glm::vec3(i*5.0, 0.0f, 0.0f));
-			model = glm::rotate(model, (float)(glfwGetTime() * M_PI * speed), glm::vec3(0.0f, 1.0f, 0.0f));
+			model = glm::translate(model, glm::vec3(i*5.0, glm::sin(currTime + i), 0.0f));
+			model = glm::rotate(model, (float)(currTime * M_PI * speed), glm::vec3(0.0f, 1.0f, 0.0f));
 
 			// normal matrix for normal vectors is defined this way
 			normal = glm::mat3(glm::transpose(glm::inverse(model)));
@@ -679,9 +791,13 @@ int main(int argc, char** argv) {
 			unsigned int normLoc = glGetUniformLocation(shaderProgram, "normal");
 			glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(normal));
 
+			// upload has_normals flag to sahder
+			unsigned int hasNormalsLoc = glGetUniformLocation(shaderProgram, "hasNormals");
+			glUniform1i(hasNormalsLoc, mesh->has_normals);
+
 			// Issue a draw call
-			glDrawElements(GL_TRIANGLES, mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
 			glUseProgram(shaderProgram);
+			glDrawElements(GL_TRIANGLES, mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
 		}
 		// Unbind the active VAO
 		glBindVertexArray(0);
@@ -706,8 +822,12 @@ int main(int argc, char** argv) {
 		}
 	} // end main render loop
 	
+	// cleanup
+	for (int i = 0; i < num_meshes; i++)
+		free(meshpool[i]);
+
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
 }
-
+ 
