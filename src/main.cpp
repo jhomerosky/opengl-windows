@@ -12,6 +12,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#define __MAX_MESHES__ 2048
+
 struct Vertex {
 	float pos[3];
 	float color[3];
@@ -28,6 +30,12 @@ struct Mesh {
 
 	size_t num_vertices = 0;
 	size_t num_faces = 0;
+
+	bool has_normals = false;
+
+	GLuint VAO;
+	GLuint VBO;
+	GLuint EBO;
 
 	~Mesh() { free(vertices); free(faces); }
 };
@@ -54,19 +62,21 @@ struct MouseInfo {
 };
 
 struct LightSource {
-	glm::vec3 pos = {5.0f, 5.0f, 5.0f};
+	glm::vec3 pos = {0.0f, 0.0f, 0.0f};
 	glm::vec3 color = {1.0f, 1.0f, 1.0f};
 };
 
-// struct Scene {
-// 	Mesh* meshes = nullptr;
-// 	~Scene() { free(meshes); }
-// };
+struct Scene {
+	Mesh* meshes[__MAX_MESHES__];
+	int meshCount = 0;
+
+	Camera camera;
+	LightSource lightSource;
+	MouseInfo mouse;
+};
 
 // ================ GLOBAL VARS ==================
-Camera camera;
-MouseInfo mouse;
-LightSource lightSource;
+Scene global_scene;
 
 // ================ END GLOBAL VARS ==================
 
@@ -93,33 +103,35 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 }
 
 void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
-	if (mouse.firstMouse) {
-		mouse.lastX = xpos;
-		mouse.lastY = ypos;
-		mouse.firstMouse = false;
+	MouseInfo *mouse = &(global_scene.mouse);
+	Camera *camera = &(global_scene.camera);
+	if (mouse->firstMouse) {
+		mouse->lastX = xpos;
+		mouse->lastY = ypos;
+		mouse->firstMouse = false;
 	}
 
-	float xoffset = xpos - mouse.lastX;
-	float yoffset = mouse.lastY - ypos;
-	mouse.lastX = xpos;
-	mouse.lastY = ypos;
+	float xoffset = xpos - mouse->lastX;
+	float yoffset = mouse->lastY - ypos;
+	mouse->lastX = xpos;
+	mouse->lastY = ypos;
 
-	xoffset *= mouse.sensitivity;
-	yoffset *= mouse.sensitivity;
+	xoffset *= mouse->sensitivity;
+	yoffset *= mouse->sensitivity;
 
-	camera.yaw += xoffset;
-	camera.pitch += yoffset;
+	camera->yaw += xoffset;
+	camera->pitch += yoffset;
 
-	if (camera.pitch > 89.0f)
-		camera.pitch = 89.0f;
-	else if (camera.pitch < -89.0f)
-		camera.pitch = -89.0f;
+	if (camera->pitch > 89.0f)
+		camera->pitch = 89.0f;
+	else if (camera->pitch < -89.0f)
+		camera->pitch = -89.0f;
 
 	glm::vec3 direction;
-	direction.x = cos(glm::radians(camera.yaw)) * cos(glm::radians(camera.pitch));
-	direction.y = sin(glm::radians(camera.pitch));
-	direction.z = sin(glm::radians(camera.yaw)) * cos(glm::radians(camera.pitch));
-	camera.front = glm::normalize(direction);
+	direction.x = cos(glm::radians(camera->yaw)) * cos(glm::radians(camera->pitch));
+	direction.y = sin(glm::radians(camera->pitch));
+	direction.z = sin(glm::radians(camera->yaw)) * cos(glm::radians(camera->pitch));
+	camera->front = glm::normalize(direction);
 }
 
 void normalize_mesh_to_unit_box(Mesh& mesh) {
@@ -189,7 +201,7 @@ int malloc_mesh_from_obj_file(const char* filename, Mesh* mesh) {
 				mesh->vertices[v_index].pos[1] = pos[1];
 				mesh->vertices[v_index].pos[2] = pos[2];
 				mesh->vertices[v_index].color[0] = 1.0;
-				mesh->vertices[v_index].color[1] = 0.0;
+				mesh->vertices[v_index].color[1] = 1.0;
 				mesh->vertices[v_index].color[2] = 1.0;
 				++v_index;
 			}
@@ -217,7 +229,6 @@ int malloc_mesh_from_obj_file(const char* filename, Mesh* mesh) {
 		}
 	}
 
-	// @Question: should this check be here?
 	if (v_index != num_vertices || f_index != num_faces || (vnormals_enabled && vn_index != num_vnormals)) { 
 		fprintf(stderr, "Failed to read .obj file\n");
 		return -1;
@@ -225,6 +236,7 @@ int malloc_mesh_from_obj_file(const char* filename, Mesh* mesh) {
 
 	mesh->num_vertices = num_vertices;
 	mesh->num_faces = num_faces;
+	mesh->has_normals = vnormals_enabled;
 	return 1;
 }
 
@@ -274,8 +286,15 @@ void print_mesh_to_stdout(const Mesh& mesh) {
 	for (int i = 0; i < mesh.num_faces; i++) {
 		printf("F[%d] = [ %d | %d | %d ]\n", i, mesh.faces[i].vertexId[0], mesh.faces[i].vertexId[1], mesh.faces[i].vertexId[2]);
 	}
-
+	if (mesh.has_normals)
+		printf("Normal vectors found.\n");
+	else
+		printf("Normal vectors NOT found.\n");
 	printf("End mesh printing.\n");
+}
+
+void print_global_scene_to_stdout() {
+	printf("scene printing not developed yet\n");
 }
 
 GLuint compileShader(GLenum type, const char* source) {
@@ -319,70 +338,142 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
     return shaderProgram;
 }
 
+int addMeshToGlobalScene(Mesh* mesh) { 
+	if (global_scene.meshCount != __MAX_MESHES__)
+		global_scene.meshes[global_scene.meshCount++] = mesh;
+	return global_scene.meshCount;
+}
+
 int initMesh(Mesh& mesh) {
-	// build mesh
+	// Build mesh
 	const char* filename = "resources/teapot.obj";
 	if (!malloc_mesh_from_obj_file(filename, &mesh)) { fprintf(stderr, "Failed to malloc the mesh\n"); return -1; } 
 
 	if (mesh.vertices == nullptr) {
 		if (!malloc_mesh_from_random(&mesh)) { fprintf(stderr, "Failed to malloc the mesh\n"); return -1; }
 	}
-	
+
 	//normalize_mesh_to_unit_box(mesh);
 	//print_mesh_to_stdout(mesh);
+
+	// Build VAO, VBO, EBOs for each mesh in the scene
+	// Vertex Attribute Object (VAO): tracks buffers and attribute locations within buffers
+	// Vertex Buffer Object (VBO): physical buffer for vertex data
+	// Element Buffer Object (EBO): physical buffer of ordered vertex indices for rendering order
+	
+	// Generate objects
+	glGenVertexArrays(1, &mesh.VAO);
+	glGenBuffers(1, &mesh.VBO);
+	glGenBuffers(1, &mesh.EBO);
+
+	// Bind objects
+	glBindVertexArray(mesh.VAO);
+	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.EBO);
+
+	// Configure vertex attributes
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0); // Position
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float))); // Color
+	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(6 * sizeof(float))); // Vector normals
+	glEnableVertexAttribArray(2);
+
+	// Unbind this VAO
+	glBindVertexArray(0);
 
 	return 0;
 }
 
-int initCamera() {
+void uploadMeshBuffers(const Mesh& mesh) {
+	// Upload vertex data
+	glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(Vertex) * mesh.num_vertices, mesh.vertices, GL_STATIC_DRAW);
+
+	// Upload index data
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.EBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * 3 * mesh.num_faces, mesh.faces, GL_STATIC_DRAW);
+
+}
+
+void initCamera(Camera& camera) {
 	camera.pos   = glm::vec3(0.0f, 0.0f,  3.0f);
 	camera.front = glm::vec3(0.0f, 0.0f, -1.0f);
 	camera.up    = glm::vec3(0.0f, 1.0f,  0.0f);
 	camera.speed = 5.0f;
-	return 0;
+}
+
+void initLightSource(LightSource& lightSource) {
+	lightSource.pos = glm::vec3(5.0f, 5.0f, 5.0f);
+	lightSource.color = glm::vec3(1.0f, 1.0f, 1.0f);
+}
+
+void initMouseInfo(MouseInfo& mouse) { 
+	mouse.lastX = 400;
+	mouse.lastY = 300;
+	mouse.sensitivity = 0.1f;
+	mouse.firstMouse = true;
+
+	mouse.lastModeSwitchTime = 0.0f;
+	mouse.modeSwitchCooldown = 0.1f;
+}
+
+void initGlobalScene() {
+	initCamera(global_scene.camera);
+	initLightSource(global_scene.lightSource);
+	initMouseInfo(global_scene.mouse);
 }
 
 void swapCursorInputMode(GLFWwindow* window) {
+	MouseInfo *mouse = &(global_scene.mouse);
 	float now = glfwGetTime();
-	if (now - mouse.lastModeSwitchTime < mouse.modeSwitchCooldown) return;
+	if (now - mouse->lastModeSwitchTime < mouse->modeSwitchCooldown) return;
 
 	if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED) {
 		glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 		glfwSetCursorPosCallback(window, NULL);
-		mouse.lastModeSwitchTime = now;
-		mouse.firstMouse = true;
+		mouse->lastModeSwitchTime = now;
+		mouse->firstMouse = true;
 	} else {
 		glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 		glfwSetCursorPosCallback(window, mouse_callback);
-		mouse.lastModeSwitchTime = now;
+		mouse->lastModeSwitchTime = now;
 	}
 }
 
 void processInput(GLFWwindow* window, float deltaTime) {
+	Camera *camera = &(global_scene.camera);
     if(glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-		camera.pos += camera.front * camera.speed * deltaTime;
+		camera->pos += camera->front * camera->speed * deltaTime;
 
 	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-		camera.pos += glm::cross(camera.up, camera.front) * camera.speed * deltaTime;
+		camera->pos += glm::cross(camera->up, camera->front) * camera->speed * deltaTime;
 
 	if (glfwGetKey(window, GLFW_KEY_APOSTROPHE) == GLFW_PRESS)
-		camera.pos += glm::vec3(0.0f, 1.0f, 0.0f) * camera.speed * deltaTime;
+		camera->pos += glm::vec3(0.0f, 1.0f, 0.0f) * camera->speed * deltaTime;
 
 	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-		camera.pos -= camera.front * camera.speed * deltaTime;
+		camera->pos -= camera->front * camera->speed * deltaTime;
 
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-		camera.pos -= glm::cross(camera.up, camera.front) * camera.speed * deltaTime;
+		camera->pos -= glm::cross(camera->up, camera->front) * camera->speed * deltaTime;
 		
 	if (glfwGetKey(window, GLFW_KEY_SLASH) == GLFW_PRESS)
-		camera.pos -= glm::vec3(0.0f, 1.0f, 0.0f) * camera.speed * deltaTime;
+		camera->pos -= glm::vec3(0.0f, 1.0f, 0.0f) * camera->speed * deltaTime;
 
 	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS)
 		swapCursorInputMode(window);
+}
 
+void fillMeshWithColor(Mesh &mesh, glm::vec3 new_color) {
+	for (int i = 0; i < mesh.num_vertices; i++) {
+		for (int j = 0; j < 3; j++) {
+			mesh.vertices[i].color[j] = new_color[j];
+		}
+	}
 }
 
 int main(int argc, char** argv) {	
@@ -412,53 +503,36 @@ int main(int argc, char** argv) {
 
 	// init
 	initOpenGL();
+	
+	initGlobalScene();
 
-	Mesh mesh;
-	initMesh(mesh);
-	initCamera();
+	Mesh mesh1;
+	addMeshToGlobalScene(&mesh1);
+	initMesh(mesh1);
+	fillMeshWithColor(mesh1, glm::vec3(1.0, 0.0, 1.0));
+	uploadMeshBuffers(mesh1);
+	
+	Mesh mesh2;
+	addMeshToGlobalScene(&mesh2);
+	initMesh(mesh2);
+	fillMeshWithColor(mesh2, glm::vec3(0.0, 1.0, 0.0));
+	uploadMeshBuffers(mesh2);
+	
 
 	// init vars for fps counter
-	double lastTime;
-	double currTime = glfwGetTime();
-	double deltaTime;
-	double fpsWindowTimeStart;
-	double fpsWindowTimeEnd = glfwGetTime();
+	float lastTime;
+	float currTime = glfwGetTime();
+	float deltaTime;
+	float fpsWindowTimeStart;
+	float fpsWindowTimeEnd = glfwGetTime();
+	float heartBeat = 0.0f;
 	unsigned int frameCount = 0;
 	int FRAMES_TO_COUNT = 60;
 	float fps;
-	char title[512];
+	char title[256];
 	
     const char* glVersion = (const char*)glGetString(GL_VERSION);
     const char* glRenderer = (const char*)glGetString(GL_RENDERER);
-
-	// Define VAO, VBO, EBO
-	GLuint VAO, VBO, EBO;
-
-	// Generate and bind VAO (Vertex Array Object)
-	glGenVertexArrays(1, &VAO);
-	glBindVertexArray(VAO);
-
-	// Generate and bind VBO (Vertex Buffer Object)
-	glGenBuffers(1, &VBO);
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-
-	// Generate and bind EBO (Element Buffer Object)
-	glGenBuffers(1, &EBO);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-
-	// Upload vertex data
-	glBufferData(GL_ARRAY_BUFFER, sizeof(Vertex) * mesh.num_vertices, mesh.vertices, GL_STATIC_DRAW);
-
-	// Upload index data
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * 3 * mesh.num_faces, mesh.faces, GL_STATIC_DRAW);
-
-	// Configure vertex attributes
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0); // Position
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float))); // Color
-	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(6 * sizeof(float))); // Vector normals
-	glEnableVertexAttribArray(2);
 
 	const char* vertexShaderSource = R"(
 		#version 330 core
@@ -529,62 +603,72 @@ int main(int argc, char** argv) {
 	glfwGetFramebufferSize(window, &width, &height);
 
 	while (!glfwWindowShouldClose(window)) {
+		// Track realtime info
 		lastTime = currTime;
 		currTime = glfwGetTime();
 		deltaTime = currTime - lastTime;
+		heartBeat += deltaTime;
+
 		// Handle input
 		processInput(window, deltaTime);
 
-		// Clear the screen
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-		// Bind the VAO (restores all attribute and buffer settings)
-		glBindVertexArray(VAO);
-
-		// Update model matrix
-		float scale = 0.10;
-		// model = glm::scale(glm::mat4(1.0f), scale * glm::vec3(1.0f, 1.0f, 1.0f));
-		// model = glm::translate(model, glm::vec3(0.0f, -10.0f, 0.0f));
-		model = glm::mat4(1.0f);
-		model = glm::rotate(model, (float)(glfwGetTime() * M_PI * 0.25f), glm::vec3(0.0f, 1.0f, 0.0f));
-
-		// normal matrix for normal vectors is defined this way
-		normal = glm::mat3(glm::transpose(glm::inverse(model)));
-
-		// Update view matrix
-		view = glm::lookAt(camera.pos, camera.pos + camera.front, camera.up);
-
-		// Update projection matrix
-		glfwGetFramebufferSize(window, &width, &height);
-		float aspect = (float)width / (float)height;
-		glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-
-		// send m,v,p matrices to the shader
-		unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
-		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-
+		// Build and upload the view matrix to the shader
+		view = glm::lookAt(global_scene.camera.pos, global_scene.camera.pos + global_scene.camera.front, global_scene.camera.up);
 		unsigned int viewLoc = glGetUniformLocation(shaderProgram, "view");
 		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
 
+		// Build and upload the projection matrix to the shader
+		glfwGetFramebufferSize(window, &width, &height);
+		proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
 		unsigned int projLoc = glGetUniformLocation(shaderProgram, "proj");
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(proj));
 
-		unsigned int normLoc = glGetUniformLocation(shaderProgram, "normal");
-		glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(normal));
-
 		// send light source to shader
 		unsigned int lightPosLoc = glGetUniformLocation(shaderProgram, "lightPos");
-		glUniform3fv(lightPosLoc, 1, glm::value_ptr(lightSource.pos));
+		glUniform3fv(lightPosLoc, 1, glm::value_ptr(global_scene.lightSource.pos));
 		unsigned int lightColorLoc = glGetUniformLocation(shaderProgram, "lightColor");
-		glUniform3fv(lightColorLoc, 1, glm::value_ptr(lightSource.color));
+		glUniform3fv(lightColorLoc, 1, glm::value_ptr(global_scene.lightSource.color));
 
 		// send camera position to shader
 		unsigned int viewPos = glGetUniformLocation(shaderProgram, "viewPos");
-		glUniform3fv(viewPos, 1, glm::value_ptr(camera.pos));
+		glUniform3fv(viewPos, 1, glm::value_ptr(global_scene.camera.pos));
 
-		// Issue a draw call
-		glDrawElements(GL_TRIANGLES, mesh.num_faces * 3, GL_UNSIGNED_INT, 0);
-		glUseProgram(shaderProgram);
+		// Clear the screen buffer
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		// Loop through the scene, build and upload the model matrix, then draw
+		for (int i = 0; i < global_scene.meshCount; i++) {
+			Mesh* mesh = global_scene.meshes[i];
+			if (mesh == nullptr) continue;
+			// Bind the VAO (restores all attribute and buffer settings)
+			glBindVertexArray(mesh->VAO);
+
+			// @TODO: model matrix could be handled in a MeshInstance object
+			// Update model matrix
+			// float scale = 0.10;
+			// model = glm::scale(glm::mat4(1.0f), scale * glm::vec3(1.0f, 1.0f, 1.0f));
+			// model = glm::translate(model, glm::vec3(0.0f, -10.0f, 0.0f));
+			float speed = glm::abs(glm::sin(0.2*i + 0.1));
+			model = glm::mat4(1.0f);
+			model = glm::translate(model, glm::vec3(i*5.0, 0.0f, 0.0f));
+			model = glm::rotate(model, (float)(glfwGetTime() * M_PI * speed), glm::vec3(0.0f, 1.0f, 0.0f));
+
+			// normal matrix for normal vectors is defined this way
+			normal = glm::mat3(glm::transpose(glm::inverse(model)));
+
+			// upload model matrix to the shader
+			unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
+			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+
+			unsigned int normLoc = glGetUniformLocation(shaderProgram, "normal");
+			glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(normal));
+
+			// Issue a draw call
+			glDrawElements(GL_TRIANGLES, mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
+			glUseProgram(shaderProgram);
+		}
+		// Unbind the active VAO
+		glBindVertexArray(0);
 
 		// Swap buffers
 		glfwSwapBuffers(window);
@@ -596,11 +680,14 @@ int main(int argc, char** argv) {
 			fpsWindowTimeStart = fpsWindowTimeEnd;
 			fpsWindowTimeEnd = currTime;
 			fps = FRAMES_TO_COUNT / (fpsWindowTimeEnd - fpsWindowTimeStart);
+		}
+ 
+		// to execute every ~second
+		if (heartBeat > 1.0f) {
 			snprintf(title, sizeof(title), "GLFW OpenGL - [FPS: %.2f] - %s - %s", fps, glVersion, glRenderer);
 			glfwSetWindowTitle(window, title);
+			heartBeat = 0.0f;
 		}
-		
-
 	} // end main render loop
 	
     glfwDestroyWindow(window);
