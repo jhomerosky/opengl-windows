@@ -41,6 +41,12 @@ struct Mesh {
 	~Mesh() { free(vertices); free(faces); }
 };
 
+// TODO: add meshinstance 
+// struct MeshInstance {
+// 	Mesh* mesh;
+// 	glm::mat4 model;
+// };
+
 struct Camera {
 	glm::vec3 pos = {0.0f, 0.0f, 0.0f};
 	glm::vec3 front = {0.0f, 0.0f, 0.0f};
@@ -234,7 +240,6 @@ int compute_and_store_vector_normals(Mesh* mesh) {
 		for (int j = 0; j < 3; j++) {
 			new_vertex_list[i * 3 + j] = mesh->vertices[mesh->faces[i].vertexId[j]];
 			for (int k = 0; k < 3; k++) {
-				// TODO: need unique pairs of vertices and normals
 				// for each vn computed (= num faces), store each (of 3) vertices with vn in new list of size 3*num_faces
 				new_vertex_list[i*3 + j].normal[k] = fnormal[k];
 			}
@@ -440,7 +445,7 @@ void processInput(GLFWwindow* window, float deltaTime) {
 	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
 		camera->pos += glm::cross(camera->up, camera->front) * camera->speed * deltaTime;
 
-	if (glfwGetKey(window, GLFW_KEY_APOSTROPHE) == GLFW_PRESS)
+	if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
 		camera->pos += glm::vec3(0.0f, 1.0f, 0.0f) * camera->speed * deltaTime;
 
 	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
@@ -449,7 +454,7 @@ void processInput(GLFWwindow* window, float deltaTime) {
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
 		camera->pos -= glm::cross(camera->up, camera->front) * camera->speed * deltaTime;
 		
-	if (glfwGetKey(window, GLFW_KEY_SLASH) == GLFW_PRESS)
+	if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
 		camera->pos -= glm::vec3(0.0f, 1.0f, 0.0f) * camera->speed * deltaTime;
 
 	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS)
@@ -597,35 +602,14 @@ int main(int argc, char** argv) {
 	initOpenGL();
 	initGlobalScene();
 
-	// // mesh1
-	// Mesh mesh1;
-	// addMeshToGlobalScene(&mesh1);
-	// initMesh(mesh1);
-	// fillMeshWithColor(mesh1, glm::vec3(1.0, 0.0, 0.0));
-	// uploadMeshBuffers(mesh1);
-	
-	// // mesh2
-	// Mesh mesh2;
-	// addMeshToGlobalScene(&mesh2);
-	// initMesh(mesh2);
-	// fillMeshWithColor(mesh2, glm::vec3(0.0, 1.0, 0.0));
-	// uploadMeshBuffers(mesh2);
+	// // mesh
+	// Mesh mesh;
+	// addMeshToGlobalScene(&mesh);
+	// initMesh(mesh);
+	// fillMeshWithColor(mesh, glm::vec3(1.0, 0.0, 0.0));
+	// uploadMeshBuffers(mesh);
 
-	// // mesh3
-	// Mesh mesh3;
-	// addMeshToGlobalScene(&mesh3);
-	// initMesh(mesh3);
-	// fillMeshWithColor(mesh3, glm::vec3(0.0, 0.0, 1.0));
-	// uploadMeshBuffers(mesh3);
-
-	// // mesh4
-	// Mesh mesh4;
-	// addMeshToGlobalScene(&mesh4);
-	// initMesh(mesh4);
-	// fillMeshWithColor(mesh4, glm::vec3(1.0, 1.0, 0.0));
-	// uploadMeshBuffers(mesh4);
-
-	int num_meshes = __MAX_MESHES__;
+	int num_meshes = 5;
 	Mesh* meshpool[__MAX_MESHES__];
 	float eps = 1e-5;
 	for (int i = 0; i < num_meshes; i++) {
@@ -720,15 +704,23 @@ int main(int argc, char** argv) {
 
 	GLuint shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
 
+	// get locations to shader uniforms
+	unsigned int lightPosLoc = glGetUniformLocation(shaderProgram, "lightPos");
+	unsigned int lightColorLoc = glGetUniformLocation(shaderProgram, "lightColor");
+	unsigned int viewPos = glGetUniformLocation(shaderProgram, "viewPos");
+	unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
+	unsigned int normLoc = glGetUniformLocation(shaderProgram, "normal");
+	unsigned int hasNormalsLoc = glGetUniformLocation(shaderProgram, "hasNormals");
+	unsigned int viewLoc = glGetUniformLocation(shaderProgram, "view");
+	unsigned int projLoc = glGetUniformLocation(shaderProgram, "proj");
+
 	// model, view, proj matrices
 	glm::mat4 model;
 	glm::mat4 view;
 	glm::mat4 proj;
 	glm::mat3 normal; // for normal vertices
 
-	int width, height;
-	glfwGetFramebufferSize(window, &width, &height);
-
+	int windowWidth, windowHeight;
 	while (!glfwWindowShouldClose(window)) {
 		// Track realtime info
 		lastTime = currTime;
@@ -741,23 +733,18 @@ int main(int argc, char** argv) {
 
 		// Build and upload the view matrix to the shader
 		view = glm::lookAt(global_scene.camera.pos, global_scene.camera.pos + global_scene.camera.front, global_scene.camera.up);
-		unsigned int viewLoc = glGetUniformLocation(shaderProgram, "view");
 		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
 
 		// Build and upload the projection matrix to the shader
-		glfwGetFramebufferSize(window, &width, &height);
-		proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 1000.0f);
-		unsigned int projLoc = glGetUniformLocation(shaderProgram, "proj");
+		glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
+		proj = glm::perspective(glm::radians(45.0f), (float)windowWidth / (float)windowHeight, 0.1f, 500.0f);
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(proj));
 
 		// send light source to shader
-		unsigned int lightPosLoc = glGetUniformLocation(shaderProgram, "lightPos");
 		glUniform3fv(lightPosLoc, 1, glm::value_ptr(global_scene.lightSource.pos));
-		unsigned int lightColorLoc = glGetUniformLocation(shaderProgram, "lightColor");
 		glUniform3fv(lightColorLoc, 1, glm::value_ptr(global_scene.lightSource.color));
 
 		// send camera position to shader
-		unsigned int viewPos = glGetUniformLocation(shaderProgram, "viewPos");
 		glUniform3fv(viewPos, 1, glm::value_ptr(global_scene.camera.pos));
 
 		// Clear the screen buffer
@@ -784,15 +771,12 @@ int main(int argc, char** argv) {
 			normal = glm::mat3(glm::transpose(glm::inverse(model)));
 
 			// upload model matrix to the shader
-			unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
 			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
 			// upload normal matrix to the shader
-			unsigned int normLoc = glGetUniformLocation(shaderProgram, "normal");
 			glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(normal));
 
 			// upload has_normals flag to sahder
-			unsigned int hasNormalsLoc = glGetUniformLocation(shaderProgram, "hasNormals");
 			glUniform1i(hasNormalsLoc, mesh->has_normals);
 
 			// Issue a draw call
