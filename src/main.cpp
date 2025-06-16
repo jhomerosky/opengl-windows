@@ -3,11 +3,6 @@
 #include <GLFW/glfw3.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
-#include <math.h>
-#include <time.h>
-#include <cfloat>
-#include <algorithm>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -93,6 +88,7 @@ Scene global_scene;
 
 
 // ===== MATH FUNCTIONS =====
+unsigned int getSeed() { unsigned int seed; seed = (unsigned int)(uintptr_t)&seed; return seed; }
 float randf() { return (float)2 * (rand() - RAND_MAX/2) / RAND_MAX; }
 int isNumber(const char *str) { if (str == NULL || *str == '\0') return 0; char* end; strtol(str, &end, 10); return *end == '\0'; }
 glm::vec3 cross3f_to_vec3(float *v1, float *v2) {
@@ -102,6 +98,7 @@ glm::vec3 cross3f_to_vec3(float *v1, float *v2) {
 	} 
 	return glm::vec3(res[0], res[1], res[2]);
 }
+float maxf(float a, float b) { return b < a ? a : b; }
 // ===== END MATH FUNCTIONS =====
 
 // ===== CALLBACK FUNCTIONS =====
@@ -202,7 +199,7 @@ void normalize_mesh_to_unit_box(Mesh& mesh) {
 	float center_x = (min_x + max_x) / 2.0f;
 	float center_y = (min_y + max_y) / 2.0f;
 	float center_z = (min_z + max_z) / 2.0f;
-	float scale = factor * 2.0f / std::max(std::max(max_x - min_x, max_y - min_y), max_z - min_z);
+	float scale = factor * 2.0f / maxf(maxf(max_x - min_x, max_y - min_y), max_z - min_z);
 
 	// Recenter and scale vertices
 	for (size_t i = 0; i < mesh.num_vertices; ++i) {
@@ -575,8 +572,7 @@ void initGlobalScene() {
 // ===== END INIT FUNCTIONS =====
 
 int main(int argc, char** argv) {
-	
-	srand(time(NULL));
+	srand(getSeed());
 
 	// init glfw
     if (!glfwInit()) { fprintf(stderr, "Failed to initialize GLFW\n"); return -1; }
