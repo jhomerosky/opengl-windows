@@ -89,13 +89,30 @@ Scene global_scene;
 
 // ===== MATH FUNCTIONS =====
 unsigned int getSeed() { unsigned int seed; seed = (unsigned int)(uintptr_t)&seed; return seed; }
+
 float randf() { return (float)2 * (rand() - RAND_MAX/2) / RAND_MAX; }
+
 int isNumber(const char *str) { if (str == NULL || *str == '\0') return 0; char* end; strtol(str, &end, 10); return *end == '\0'; }
+
 void cross3f_to_vec3(float v1[3], float v2[3], float res[3]) {
 	for (int i = 0; i < 3; i++) {
 		res[i] = (v1[(i+1) % 3]*v2[(i+2) % 3]) - (v1[(i+2) % 3]*v2[(i+1) % 3]);
 	}
 }
+
+float dot(float u[3], float v[3]) {
+	float res = 0;
+	for (int i = 0; i < 3; i++)
+		res += u[i] * v[i];
+	return res;
+}
+
+void normalize_in_place(float v[3]) {
+	float norm_factor = 1.0/sqrt(dot(v,v));
+	for (int i = 0; i < 3; i++)
+		v[i] *= norm_factor;
+}
+
 float maxf(float a, float b) { return b < a ? a : b; }
 // ===== END MATH FUNCTIONS =====
 
@@ -131,6 +148,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 	else if (camera->pitch < -89.0f)
 		camera->pitch = -89.0f;
 
+	// TODO: can we cleanup glm dependency?
 	glm::vec3 direction;
 	direction.x = cos(glm::radians(camera->yaw)) * cos(glm::radians(camera->pitch));
 	direction.y = sin(glm::radians(camera->pitch));
@@ -219,7 +237,6 @@ int compute_and_store_vector_normals(Mesh* mesh) {
 
 	float e1[3];
 	float e2[3];
-	glm::vec3 fnormal;
 	float res[3];
 	
 	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces);
@@ -232,12 +249,12 @@ int compute_and_store_vector_normals(Mesh* mesh) {
 		}
 		// cross product will not be near 0 because we are using edges of a triangle
 		cross3f_to_vec3(e1, e2, res);
-		fnormal = glm::normalize(glm::vec3(res[0], res[1], res[2]));
+		normalize_in_place(res);
 		for (int j = 0; j < 3; j++) {
 			new_vertex_list[i * 3 + j] = mesh->vertices[mesh->faces[i].vertexId[j]];
 			for (int k = 0; k < 3; k++) {
 				// for each vn computed (= num faces), store each (of 3) vertices with vn in new list of size 3*num_faces
-				new_vertex_list[i*3 + j].normal[k] = fnormal[k];
+				new_vertex_list[i*3 + j].normal[k] = res[k];
 			}
 			mesh->faces[i].vertexId[j] = i*3 + j;
 		}
@@ -517,7 +534,7 @@ int initMesh(Mesh* mesh) {
 	mesh->has_normals = false;
 
 	// Build mesh
-	const char* filename = "resources/teapot.obj";
+	const char* filename = "resources/elf.obj";
 	if (!malloc_mesh_fields_from_obj_file(filename, mesh)) { fprintf(stderr, "Failed to malloc the mesh fields in malloc_mesh_fields_from_obj_file\n"); return -1; } 
 
 	if (mesh->vertices == nullptr) {
