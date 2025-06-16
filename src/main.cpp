@@ -91,12 +91,10 @@ Scene global_scene;
 unsigned int getSeed() { unsigned int seed; seed = (unsigned int)(uintptr_t)&seed; return seed; }
 float randf() { return (float)2 * (rand() - RAND_MAX/2) / RAND_MAX; }
 int isNumber(const char *str) { if (str == NULL || *str == '\0') return 0; char* end; strtol(str, &end, 10); return *end == '\0'; }
-glm::vec3 cross3f_to_vec3(float *v1, float *v2) {
-	float res[3];
+void cross3f_to_vec3(float v1[3], float v2[3], float res[3]) {
 	for (int i = 0; i < 3; i++) {
 		res[i] = (v1[(i+1) % 3]*v2[(i+2) % 3]) - (v1[(i+2) % 3]*v2[(i+1) % 3]);
-	} 
-	return glm::vec3(res[0], res[1], res[2]);
+	}
 }
 float maxf(float a, float b) { return b < a ? a : b; }
 // ===== END MATH FUNCTIONS =====
@@ -222,7 +220,7 @@ int compute_and_store_vector_normals(Mesh* mesh) {
 	float e1[3];
 	float e2[3];
 	glm::vec3 fnormal;
-	float diff[3];
+	float res[3];
 	
 	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces);
 	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list\n"); return -1; }
@@ -233,7 +231,8 @@ int compute_and_store_vector_normals(Mesh* mesh) {
 			e2[j] = mesh->vertices[mesh->faces[i].vertexId[2]].pos[j] - mesh->vertices[mesh->faces[i].vertexId[1]].pos[j]; 
 		}
 		// cross product will not be near 0 because we are using edges of a triangle
-		fnormal = glm::normalize(cross3f_to_vec3(e1, e2));
+		cross3f_to_vec3(e1, e2, res);
+		fnormal = glm::normalize(glm::vec3(res[0], res[1], res[2]));
 		for (int j = 0; j < 3; j++) {
 			new_vertex_list[i * 3 + j] = mesh->vertices[mesh->faces[i].vertexId[j]];
 			for (int k = 0; k < 3; k++) {
