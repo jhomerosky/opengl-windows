@@ -12,8 +12,8 @@
 // ===== CUSTOM STRUCTS =====
 struct Vertex {
 	float pos[3];
-	float color[3];
-	float normal[3] = {0, 0, 0}; // if vnormals are not used, then no contribution to lighting
+	//float color[3];
+	float normal[3];
 };
 
 struct Face {
@@ -24,10 +24,10 @@ struct Mesh {
 	Vertex* vertices = nullptr;
 	Face* faces = nullptr;
 
-	size_t num_vertices = 0;
-	size_t num_faces = 0;
+	size_t num_vertices;
+	size_t num_faces;
 
-	bool has_normals = false;
+	bool has_normals;
 
 	GLuint VAO;
 	GLuint VBO;
@@ -43,36 +43,36 @@ struct Mesh {
 // };
 
 struct Camera {
-	glm::vec3 pos = {0.0f, 0.0f, 0.0f};
-	glm::vec3 front = {0.0f, 0.0f, 0.0f};
-	glm::vec3 up = {0.0f, 0.0f, 0.0f};
+	glm::vec3 pos;
+	glm::vec3 front;
+	glm::vec3 up;
 
-	float pitch = 0;
-	float yaw = -90.0f;
-	float speed = 0;
+	float pitch;
+	float yaw; //= -90.0f;
+	float speed;
 
 	float TOP_SPEED;
 	float NORMAL_SPEED;
 };
 
 struct MouseInfo {
-	float lastX = 400;
-	float lastY = 300;
-	float sensitivity = 0.1f;
-	bool firstMouse = true;
+	float lastX;// = 400;
+	float lastY;// = 300;
+	float sensitivity;// = 0.1f;
+	bool firstMouse;// = true;
 
-	float lastModeSwitchTime = 0.0f;
-	float modeSwitchCooldown = 0.1f;
+	float lastModeSwitchTime;// = 0.0f;
+	float modeSwitchCooldown;// = 0.1f;
 };
 
 struct LightSource {
-	glm::vec3 pos = {0.0f, 0.0f, 0.0f};
-	glm::vec3 color = {1.0f, 1.0f, 1.0f};
+	glm::vec3 pos;// = {0.0f, 0.0f, 0.0f};
+	glm::vec3 color;// = {1.0f, 1.0f, 1.0f};
 };
 
 struct Scene {
 	Mesh* meshes[__MAX_MESHES__];
-	int meshCount = 0;
+	int meshCount;// = 0;
 
 	Camera camera;
 	LightSource lightSource;
@@ -302,9 +302,9 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 				mesh->vertices[v_index].pos[0] = pos[0];
 				mesh->vertices[v_index].pos[1] = pos[1];
 				mesh->vertices[v_index].pos[2] = pos[2];
-				mesh->vertices[v_index].color[0] = 1.0;
-				mesh->vertices[v_index].color[1] = 1.0;
-				mesh->vertices[v_index].color[2] = 1.0;
+				//mesh->vertices[v_index].color[0] = 1.0;
+				//mesh->vertices[v_index].color[1] = 1.0;
+				//mesh->vertices[v_index].color[2] = 1.0;
 				++v_index;
 			}
 		}
@@ -343,13 +343,13 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 }
 
 int malloc_mesh_fields_from_random(Mesh* mesh) {
-	float color_palette[5][3] = {
+	/*float color_palette[5][3] = {
 		{1.0f, 0.0f, 0.0f}, // red
 		{0.0f, 1.0f, 0.0f}, // green
 		{0.0f, 0.0f, 1.0f}, // blue
 		{1.0f, 1.0f, 0.0f}, // yellow
 		{1.0f, 0.0f, 1.0f}  // magenta
-	};
+	};*/
 
 	mesh->vertices = (Vertex*)malloc(sizeof(Vertex) * 5);
 	mesh->num_vertices = 5;
@@ -357,9 +357,9 @@ int malloc_mesh_fields_from_random(Mesh* mesh) {
 		mesh->vertices[i].pos[0] = randf();
 		mesh->vertices[i].pos[1] = randf();
 		mesh->vertices[i].pos[2] = 0;
-		for (int j = 0; j < 3; j++) {
+		/*for (int j = 0; j < 3; j++) {
 			mesh->vertices[i].color[j] = color_palette[i][j];
-		}
+		}*/
 	}
 
 	mesh->faces = (Face*)malloc(sizeof(Face) * 2);
@@ -480,6 +480,7 @@ void processInput(GLFWwindow* window, float deltaTime) {
 	}
 }
 
+/*
 void fillMeshWithColor(Mesh *mesh, glm::vec3 new_color) {
 	for (int i = 0; i < mesh->num_vertices; i++) {
 		for (int j = 0; j < 3; j++) {
@@ -487,6 +488,7 @@ void fillMeshWithColor(Mesh *mesh, glm::vec3 new_color) {
 		}
 	}
 }
+*/
 
 // ===== INIT FUNCTIONS ===== 
 // called before the loop 
@@ -505,6 +507,11 @@ void initCamera(Camera& camera) {
 	camera.pos   = glm::vec3(0.0f, 0.0f,  3.0f);
 	camera.front = glm::vec3(0.0f, 0.0f, -1.0f);
 	camera.up    = glm::vec3(0.0f, 1.0f,  0.0f);
+
+	camera.pitch = 0.0f;
+	camera.yaw = -90.0f;
+	camera.speed = 0.0f;
+
 	camera.speed = 5.0f;
 	camera.TOP_SPEED = 50.0f;
 	camera.NORMAL_SPEED = 5.0f;
@@ -534,7 +541,7 @@ int initMesh(Mesh* mesh) {
 	mesh->has_normals = false;
 
 	// Build mesh
-	const char* filename = "resources/elf.obj";
+	const char* filename = "resources/teapot.obj";
 	if (!malloc_mesh_fields_from_obj_file(filename, mesh)) { fprintf(stderr, "Failed to malloc the mesh fields in malloc_mesh_fields_from_obj_file\n"); return -1; } 
 
 	if (mesh->vertices == nullptr) {
@@ -569,10 +576,10 @@ int initMesh(Mesh* mesh) {
 	// Configure vertex attributes
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0); // Position
 	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float))); // Color
+	//glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float))); // Color
+	//glEnableVertexAttribArray(1);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float))); // Vector normals
 	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(6 * sizeof(float))); // Vector normals
-	glEnableVertexAttribArray(2);
 
 	// Unbind this VAO
 	glBindVertexArray(0);
@@ -584,6 +591,7 @@ void initGlobalScene() {
 	initCamera(global_scene.camera);
 	initLightSource(global_scene.lightSource);
 	initMouseInfo(global_scene.mouse);
+	global_scene.meshCount = 0;
 }
 // ===== END INIT FUNCTIONS =====
 
@@ -628,7 +636,7 @@ int main(int argc, char** argv) {
 		meshpool[i] = (Mesh*)malloc(sizeof(Mesh));
 		addMeshToGlobalScene(meshpool[i]);
 		initMesh(meshpool[i]);
-		fillMeshWithColor(meshpool[i], glm::normalize(eps + glm::vec3(rand(), rand(), rand())));
+		//fillMeshWithColor(meshpool[i], glm::normalize(eps + glm::vec3(rand(), rand(), rand())));
 		uploadMeshBuffers(meshpool[i]);
 	}
 	
@@ -652,8 +660,8 @@ int main(int argc, char** argv) {
 	const char* vertexShaderSource = R"(
 		#version 330 core
 		layout(location = 0) in vec3 position;
-		layout(location = 1) in vec3 color;
-		layout(location = 2) in vec3 vnormal;
+		//layout(location = 1) in vec3 color;
+		layout(location = 1) in vec3 vnormal;
 
 		uniform mat4 model;
 		uniform mat4 view;
@@ -667,7 +675,7 @@ int main(int argc, char** argv) {
 			fragPosition = vec3(model * vec4(position, 1.0));
 			gl_Position = proj * view * vec4(fragPosition, 1.0);
 			
-			fragColor = color;
+			fragColor = vec3(1.0, 1.0, 1.0);
 			fragNormal = normal * vnormal;
 		}
 	)";
