@@ -37,10 +37,10 @@ struct Mesh {
 };
 
 // TODO: add meshinstance 
-// struct MeshInstance {
-// 	Mesh* mesh;
-// 	glm::mat4 model;
-// };
+struct MeshInstance {
+	Mesh* mesh;
+	glm::mat4 model;
+};
 
 struct Camera {
 	glm::vec3 pos;
@@ -114,6 +114,8 @@ void normalize_in_place(float v[3]) {
 }
 
 float maxf(float a, float b) { return b < a ? a : b; }
+
+float radiansf(float degrees) { return degrees * 0.01745329251994329576923690768489; }
 // ===== END MATH FUNCTIONS =====
 
 // ===== CALLBACK FUNCTIONS =====
@@ -148,12 +150,12 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 	else if (camera->pitch < -89.0f)
 		camera->pitch = -89.0f;
 
-	// TODO: can we cleanup glm dependency?
-	glm::vec3 direction;
-	direction.x = cos(glm::radians(camera->yaw)) * cos(glm::radians(camera->pitch));
-	direction.y = sin(glm::radians(camera->pitch));
-	direction.z = sin(glm::radians(camera->yaw)) * cos(glm::radians(camera->pitch));
-	camera->front = glm::normalize(direction);
+	float direction[3];
+	direction[0] = cos(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
+	direction[1] = sin(radiansf(camera->pitch));
+	direction[2] = sin(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
+	normalize_in_place(direction);
+	camera->front = glm::vec3(direction[0], direction[1], direction[2]);
 }
 // ===== END CALLBACK FUNCTIONS =====
 
@@ -586,6 +588,10 @@ int initMesh(Mesh* mesh) {
 
 	return 0;
 }
+
+// TODO: loadMeshResources() to load all resources into (global?) mesh objects.
+// Should scene hold all meshes? Should have some other global called ResourceStore?
+// Probably resourcestore, and the logic to add a mesh instance to an object will point to a mesh in the resource store?
 
 void initGlobalScene() {
 	initCamera(global_scene.camera);
