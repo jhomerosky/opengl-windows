@@ -8,6 +8,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #define __MAX_MESHES__ 2048
+#define __MAX_MODELS__ 2048
 
 // ===== CUSTOM STRUCTS =====
 struct Vertex {
@@ -40,6 +41,7 @@ struct Mesh {
 struct MeshInstance {
 	Mesh* mesh;
 	glm::mat4 model;
+	glm::vec3 color;
 };
 
 struct Camera {
@@ -51,8 +53,10 @@ struct Camera {
 	float yaw; //= -90.0f;
 	float speed;
 
-	float TOP_SPEED;
-	float NORMAL_SPEED;
+	float TOP_MOVE_SPEED;
+	float NORMAL_MOVE_SPEED;
+
+	float PAN_SPEED;
 };
 
 struct MouseInfo {
@@ -71,18 +75,29 @@ struct LightSource {
 };
 
 struct Scene {
-	Mesh* meshes[__MAX_MESHES__];
-	int meshCount;// = 0;
+	MeshInstance* meshInstances[__MAX_MODELS__];
+	int meshInstanceCount;// = 0;
 
 	Camera camera;
 	LightSource lightSource;
 	MouseInfo mouse;
+};
+
+struct ResourcePool {
+	Mesh* meshes[__MAX_MESHES__];
+	int meshCount;
+
+	~ResourcePool() {
+		for (int i = 0; i < meshCount; i++) 
+			free(meshes[i]);
+	}
 };
 // ===== END CUSTOM STRUCTS =====
 
 
 // ===== GLOBAL VARS =====
 Scene global_scene;
+ResourcePool global_resource_pool;
 
 // ===== END GLOBAL VARS =====
 
@@ -415,10 +430,16 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
     return shaderProgram;
 }
 
-int addMeshToGlobalScene(Mesh* mesh) { 
-	if (global_scene.meshCount != __MAX_MESHES__)
-		global_scene.meshes[global_scene.meshCount++] = mesh;
-	return global_scene.meshCount;
+int addMeshInstanceToGlobalScene(MeshInstance* meshInstance) { 
+	if (global_scene.meshInstanceCount != __MAX_MESHES__)
+		global_scene.meshInstances[global_scene.meshInstanceCount++] = meshInstance;
+	return global_scene.meshInstanceCount;
+}
+
+int addMeshToResourcePool(Mesh* mesh) {
+	if (global_resource_pool.meshCount != __MAX_MODELS__)
+		global_resource_pool.meshes[global_resource_pool.meshCount++] = mesh;
+	return global_resource_pool.meshCount;
 }
 
 // Upload the data to the GPU
@@ -449,6 +470,19 @@ void swapCursorInputMode(GLFWwindow* window) {
 	}
 }
 
+void panCamera(GLFWwindow* window, float angle) {
+	Camera* camera = &(global_scene.camera);
+
+	camera->yaw += angle;
+
+	float direction[3];
+	direction[0] = cos(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
+	direction[1] = sin(radiansf(camera->pitch));
+	direction[2] = sin(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
+	normalize_in_place(direction);
+	camera->front = glm::vec3(direction[0], direction[1], direction[2]);
+}
+
 void processInput(GLFWwindow* window, float deltaTime) {
 	Camera *camera = &(global_scene.camera);
     if(glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
@@ -476,21 +510,20 @@ void processInput(GLFWwindow* window, float deltaTime) {
 		swapCursorInputMode(window);
 
 	if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-		camera->speed = camera->TOP_SPEED;
+		camera->speed = camera->TOP_MOVE_SPEED;
 	} else {
-		camera->speed = camera->NORMAL_SPEED;
+		camera->speed = camera->NORMAL_MOVE_SPEED;
 	}
-}
 
-/*
-void fillMeshWithColor(Mesh *mesh, glm::vec3 new_color) {
-	for (int i = 0; i < mesh->num_vertices; i++) {
-		for (int j = 0; j < 3; j++) {
-			mesh->vertices[i].color[j] = new_color[j];
-		}
+	if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
+		panCamera(window, -camera->PAN_SPEED * deltaTime);
 	}
+
+	if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
+		panCamera(window, camera->PAN_SPEED * deltaTime);
+	}
+
 }
-*/
 
 // ===== INIT FUNCTIONS ===== 
 // called before the loop 
@@ -515,8 +548,10 @@ void initCamera(Camera& camera) {
 	camera.speed = 0.0f;
 
 	camera.speed = 5.0f;
-	camera.TOP_SPEED = 50.0f;
-	camera.NORMAL_SPEED = 5.0f;
+	camera.TOP_MOVE_SPEED = 50.0f;
+	camera.NORMAL_MOVE_SPEED = 5.0f;
+
+	camera.PAN_SPEED = 90.0f;
 }
 
 void initLightSource(LightSource& lightSource) {
@@ -541,24 +576,6 @@ int initMesh(Mesh* mesh) {
 	mesh->num_vertices = 0;
 	mesh->num_faces = 0;
 	mesh->has_normals = false;
-
-	// Build mesh
-	const char* filename = "resources/teapot.obj";
-	if (!malloc_mesh_fields_from_obj_file(filename, mesh)) { fprintf(stderr, "Failed to malloc the mesh fields in malloc_mesh_fields_from_obj_file\n"); return -1; } 
-
-	if (mesh->vertices == nullptr) {
-		if (!malloc_mesh_fields_from_random(mesh)) { fprintf(stderr, "Failed to malloc the mesh fields in malloc_mesh_fields_from_random\n"); return -1; }
-	}
-
-	// if we couldn't load normnals from file, then compute them now
-	// @TODO: write normals back to file?
-	if (!mesh->has_normals) {
-		printf("Normals not found. Computing normals and rebuilding mesh.\n");
-		compute_and_store_vector_normals(mesh);
-	}
-
-	//normalize_mesh_to_unit_box(mesh);
-	//print_mesh_to_stdout(mesh);
 
 	// Build VAO, VBO, EBOs for each mesh in the scene
 	// Vertex Attribute Object (VAO): tracks buffers and attribute locations within buffers
@@ -589,6 +606,46 @@ int initMesh(Mesh* mesh) {
 	return 0;
 }
 
+// hardcodes which mesh to load
+void initMeshInstance(MeshInstance* meshInstance) {
+	meshInstance->mesh = global_resource_pool.meshes[0]; // teapot.obj
+	meshInstance->model = glm::mat4(1.0f);
+	meshInstance->color = glm::vec3(1.0f, 1.0f, 1.0f);
+}
+
+// this should probably be refactored
+// this hardcodes a list of filenames
+// for each item in the list:
+//     1. malloc+init a new mesh
+//     2. malloc mesh fields and load data from file
+//     3. register mesh to resource pool list
+//     4. upload mesh data to GPU buffers
+// return total count of meshes in resource pool
+int initGlobalResourcePoolMallocMeshAndMeshFields() {
+	int num_meshes = 1;
+	const char *list_of_meshes[] = {
+		"resources/teapot.obj"/*,
+		"resources/teapot2.obj",
+		"resources/guy.obj",
+		"resources/HP_Portrait.obj"*/
+	};
+	for (int i = 0; i < num_meshes; i++) {
+		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
+		initMesh(mesh);
+		malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh);
+		// if we couldn't load normnals from file, then compute them now
+		// @TODO: write normals back to file?
+		if (!mesh->has_normals) {
+			printf("Normals not found. Computing normals and rebuilding mesh.\n");
+			compute_and_store_vector_normals(mesh);
+		}
+		addMeshToResourcePool(mesh);
+		uploadMeshBuffers(mesh);
+	}
+
+	return global_resource_pool.meshCount;
+}
+
 // TODO: loadMeshResources() to load all resources into (global?) mesh objects.
 // Should scene hold all meshes? Should have some other global called ResourceStore?
 // Probably resourcestore, and the logic to add a mesh instance to an object will point to a mesh in the resource store?
@@ -597,7 +654,7 @@ void initGlobalScene() {
 	initCamera(global_scene.camera);
 	initLightSource(global_scene.lightSource);
 	initMouseInfo(global_scene.mouse);
-	global_scene.meshCount = 0;
+	global_scene.meshInstanceCount = 0;
 }
 // ===== END INIT FUNCTIONS =====
 
@@ -628,23 +685,23 @@ int main(int argc, char** argv) {
 	initOpenGL();
 	initGlobalScene();
 
-	// // mesh
-	// Mesh mesh;
-	// addMeshToGlobalScene(&mesh);
-	// initMesh(mesh);
-	// fillMeshWithColor(mesh, glm::vec3(1.0, 0.0, 0.0));
-	// uploadMeshBuffers(mesh);
+	int num_meshes = initGlobalResourcePoolMallocMeshAndMeshFields();
 
-	int num_meshes = 5;
-	Mesh* meshpool[__MAX_MESHES__];
-	float eps = 1e-5;
-	for (int i = 0; i < num_meshes; i++) {
-		meshpool[i] = (Mesh*)malloc(sizeof(Mesh));
-		addMeshToGlobalScene(meshpool[i]);
-		initMesh(meshpool[i]);
-		//fillMeshWithColor(meshpool[i], glm::normalize(eps + glm::vec3(rand(), rand(), rand())));
-		uploadMeshBuffers(meshpool[i]);
+	int num_models = __MAX_MODELS__;
+	MeshInstance* modelpool[__MAX_MODELS__];
+	for (int i = 0; i < num_models; i++) {
+		modelpool[i] = (MeshInstance*)malloc(sizeof(MeshInstance));
+		initMeshInstance(modelpool[i]);
+		addMeshInstanceToGlobalScene(modelpool[i]);
+		modelpool[i]->color = glm::vec3(randf()/3.0f + 0.66f, randf()/3.0f + 0.66f, randf()/3.0f + 0.66f);
 	}
+
+	// TEMPORARY: sun object
+	MeshInstance sun;
+	initMeshInstance(&sun);
+	sun.model = glm::translate(glm::mat4(1.0f), global_scene.lightSource.pos);
+	sun.color = glm::vec3(1.0f, 1.0f, 1.0f);
+	glm::mat4 sunNormal = glm::mat3(glm::transpose(glm::inverse(sun.model)));
 	
 	// init vars for fps counter
 	float lastTime;
@@ -673,6 +730,7 @@ int main(int argc, char** argv) {
 		uniform mat4 view;
 		uniform mat4 proj;
 		uniform mat3 normal;
+		uniform vec3 modelColor;
 
 		out vec3 fragPosition;
 		out vec3 fragColor;
@@ -681,7 +739,7 @@ int main(int argc, char** argv) {
 			fragPosition = vec3(model * vec4(position, 1.0));
 			gl_Position = proj * view * vec4(fragPosition, 1.0);
 			
-			fragColor = vec3(1.0, 1.0, 1.0);
+			fragColor = modelColor;
 			fragNormal = normal * vnormal;
 		}
 	)";
@@ -731,6 +789,7 @@ int main(int argc, char** argv) {
 	GLuint shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
 
 	// get locations to shader uniforms
+	unsigned int modelColorLoc = glGetUniformLocation(shaderProgram, "modelColor");
 	unsigned int lightPosLoc = glGetUniformLocation(shaderProgram, "lightPos");
 	unsigned int lightColorLoc = glGetUniformLocation(shaderProgram, "lightColor");
 	unsigned int viewPos = glGetUniformLocation(shaderProgram, "viewPos");
@@ -741,7 +800,6 @@ int main(int argc, char** argv) {
 	unsigned int projLoc = glGetUniformLocation(shaderProgram, "proj");
 
 	// model, view, proj matrices
-	glm::mat4 model;
 	glm::mat4 view;
 	glm::mat4 proj;
 	glm::mat3 normal; // for normal vertices
@@ -776,28 +834,39 @@ int main(int argc, char** argv) {
 		// Clear the screen buffer
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+		// Render sun
+		glBindVertexArray(sun.mesh->VAO);
+		glUniform3fv(modelColorLoc, 1, glm::value_ptr(sun.color));
+		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(sun.model));
+		glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(sunNormal));
+		glUniform1i(hasNormalsLoc, false);
+		glUseProgram(shaderProgram);
+		glDrawElements(GL_TRIANGLES, sun.mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
+		// End render sun
+
 		// Loop through the scene, build and upload the model matrix, then draw
-		for (int i = 0; i < global_scene.meshCount; i++) {
-			Mesh* mesh = global_scene.meshes[i];
+		for (int i = 0; i < global_scene.meshInstanceCount; i++) {
+			MeshInstance* meshInstance = global_scene.meshInstances[i];
+			if (meshInstance == nullptr) continue;
+			Mesh* mesh = meshInstance->mesh;
 			if (mesh == nullptr) continue;
 			// Bind the VAO (restores all attribute and buffer settings)
 			glBindVertexArray(mesh->VAO);
 
-			// @TODO: model matrix could be handled in a MeshInstance object
 			// Update model matrix
-			// float scale = 0.10;
-			// model = glm::scale(glm::mat4(1.0f), scale * glm::vec3(1.0f, 1.0f, 1.0f));
-			// model = glm::translate(model, glm::vec3(0.0f, -10.0f, 0.0f));
 			float speed = glm::abs(glm::sin(0.2*i));
-			model = glm::mat4(1.0f);
-			model = glm::translate(model, glm::vec3(i*5.0, glm::sin(currTime + i), 0.0f));
-			model = glm::rotate(model, (float)(currTime * M_PI * speed), glm::vec3(0.0f, 1.0f, 0.0f));
+			meshInstance->model = glm::mat4(1.0f);
+			meshInstance->model = glm::translate(meshInstance->model, glm::vec3(i*5.0f, glm::sin(currTime + i), 0.0f)); //i % 5)*5.0f));
+			meshInstance->model = glm::rotate(meshInstance->model, (float)(currTime * M_PI * speed), glm::vec3(0.0f, 1.0f, 0.0f));
+
+			// upload color vector to the shader
+			glUniform3fv(modelColorLoc, 1, glm::value_ptr(meshInstance->color));
 
 			// normal matrix for normal vectors is defined this way
-			normal = glm::mat3(glm::transpose(glm::inverse(model)));
+			normal = glm::mat3(glm::transpose(glm::inverse(meshInstance->model)));
 
 			// upload model matrix to the shader
-			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(meshInstance->model));
 
 			// upload normal matrix to the shader
 			glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(normal));
@@ -831,10 +900,11 @@ int main(int argc, char** argv) {
 			heartBeat = 0.0f;
 		}
 	} // end main render loop
-	
-	// cleanup
-	for (int i = 0; i < num_meshes; i++)
-		free(meshpool[i]);
+
+	// cleanup here
+	for (int i = 0; i < num_models; i++) {
+		free(global_scene.meshInstances[i]);
+	}
 
     glfwDestroyWindow(window);
     glfwTerminate();
