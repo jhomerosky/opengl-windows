@@ -6,92 +6,11 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <omp.h>
 
-#define __MAX_MESHES__ 2048
-#define __MAX_MODELS__ 2048
-
-// ===== CUSTOM STRUCTS =====
-struct Vertex {
-	float pos[3];
-	//float color[3];
-	float normal[3];
-};
-
-struct Face {
-	unsigned int vertexId[3];
-};
-
-struct Mesh {
-	Vertex* vertices = nullptr;
-	Face* faces = nullptr;
-
-	size_t num_vertices;
-	size_t num_faces;
-
-	bool has_normals;
-
-	GLuint VAO;
-	GLuint VBO;
-	GLuint EBO;
-
-	~Mesh() { free(vertices); free(faces); }
-};
-
-struct MeshInstance {
-	Mesh* mesh;
-	glm::mat4 model;
-	glm::vec3 color;
-};
-
-struct Camera {
-	glm::vec3 pos;
-	glm::vec3 front;
-	glm::vec3 up;
-
-	float pitch;
-	float yaw; //= -90.0f;
-	float speed;
-
-	float TOP_MOVE_SPEED;
-	float NORMAL_MOVE_SPEED;
-
-	float PAN_SPEED;
-};
-
-struct MouseInfo {
-	float lastX;// = 400;
-	float lastY;// = 300;
-	float sensitivity;// = 0.1f;
-	bool firstMouse;// = true;
-
-	float lastModeSwitchTime;// = 0.0f;
-	float modeSwitchCooldown;// = 0.1f;
-};
-
-struct LightSource {
-	glm::vec3 pos;// = {0.0f, 0.0f, 0.0f};
-	glm::vec3 color;// = {1.0f, 1.0f, 1.0f};
-};
-
-struct Scene {
-	MeshInstance* meshInstances[__MAX_MODELS__];
-	int meshInstanceCount;// = 0;
-
-	Camera camera;
-	LightSource lightSource;
-	MouseInfo mouse;
-};
-
-struct ResourcePool {
-	Mesh* meshes[__MAX_MESHES__];
-	int meshCount;
-
-	~ResourcePool() {
-		for (int i = 0; i < meshCount; i++) 
-			free(meshes[i]);
-	}
-};
-// ===== END CUSTOM STRUCTS =====
+#include "structs.cpp"
+#include "math_utils.cpp"
+#include "shaders.cpp"
 
 
 // ===== GLOBAL VARS =====
@@ -99,38 +18,6 @@ Scene global_scene;
 ResourcePool global_resource_pool;
 
 // ===== END GLOBAL VARS =====
-
-
-// ===== MATH FUNCTIONS =====
-unsigned int getSeed() { unsigned int seed; seed = (unsigned int)(uintptr_t)&seed; return seed; }
-
-float randf() { return (float)2 * (rand() - RAND_MAX/2) / RAND_MAX; }
-
-int isNumber(const char *str) { if (str == NULL || *str == '\0') return 0; char* end; strtol(str, &end, 10); return *end == '\0'; }
-
-void cross3f_to_vec3(float v1[3], float v2[3], float res[3]) {
-	for (int i = 0; i < 3; i++) {
-		res[i] = (v1[(i+1) % 3]*v2[(i+2) % 3]) - (v1[(i+2) % 3]*v2[(i+1) % 3]);
-	}
-}
-
-float dot(float u[3], float v[3]) {
-	float res = 0;
-	for (int i = 0; i < 3; i++)
-		res += u[i] * v[i];
-	return res;
-}
-
-void normalize_in_place(float v[3]) {
-	float norm_factor = 1.0/sqrt(dot(v,v));
-	for (int i = 0; i < 3; i++)
-		v[i] *= norm_factor;
-}
-
-float maxf(float a, float b) { return b < a ? a : b; }
-
-float radiansf(float degrees) { return degrees * 0.01745329251994329576923690768489; }
-// ===== END MATH FUNCTIONS =====
 
 // ===== CALLBACK FUNCTIONS =====
 // function to execute when the window is resized
@@ -241,9 +128,9 @@ void normalize_mesh_to_unit_box(Mesh& mesh) {
 	}
 }
 
-// @Assuming: CCW face orientation
-// @Assuming: faces are triangles
-// MUTATES the mesh vertex list
+// @Assuming: CCW face orientation, faces are triangles
+// @TODO: parallelize
+// @Mutates the mesh vertex list
 int compute_and_store_vector_normals(Mesh* mesh) {
 	// for each face:
 	// e1 = v2 - v1, e2 = v3 - v2
@@ -251,29 +138,55 @@ int compute_and_store_vector_normals(Mesh* mesh) {
 	// assign this normal to all vertices in this face
 	// build new vertex list from unique pairs of v, vnormal
 
-	float e1[3];
-	float e2[3];
-	float res[3];
-	
 	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces);
 	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list\n"); return -1; }
 
+	#pragma omp parallel for
 	for (int i = 0; i < mesh->num_faces; i++) {
-		for (int j = 0; j < 3; j++) {
-			e1[j] = mesh->vertices[mesh->faces[i].vertexId[1]].pos[j] - mesh->vertices[mesh->faces[i].vertexId[0]].pos[j];
-			e2[j] = mesh->vertices[mesh->faces[i].vertexId[2]].pos[j] - mesh->vertices[mesh->faces[i].vertexId[1]].pos[j]; 
-		}
+		//printf("omp num threads: %d\n", omp_get_num_threads());
+		// private memory
+		float e1[3];
+		float e2[3];
+		float res[3];
+		// vertices
+		Vertex v0 = mesh->vertices[mesh->faces[i].vertexId[0]];
+		Vertex v1 = mesh->vertices[mesh->faces[i].vertexId[1]];
+		Vertex v2 = mesh->vertices[mesh->faces[i].vertexId[2]];
+		// e1
+		e1[0] = v1.pos[0] - v0.pos[0];
+		e1[1] = v1.pos[1] - v0.pos[1];
+		e1[2] = v1.pos[2] - v0.pos[2];
+		// e2
+		e2[0] = v2.pos[0] - v1.pos[0];
+		e2[1] = v2.pos[1] - v1.pos[1];
+		e2[2] = v2.pos[2] - v1.pos[2];
+
 		// cross product will not be near 0 because we are using edges of a triangle
 		cross3f_to_vec3(e1, e2, res);
 		normalize_in_place(res);
-		for (int j = 0; j < 3; j++) {
-			new_vertex_list[i * 3 + j] = mesh->vertices[mesh->faces[i].vertexId[j]];
-			for (int k = 0; k < 3; k++) {
-				// for each vn computed (= num faces), store each (of 3) vertices with vn in new list of size 3*num_faces
-				new_vertex_list[i*3 + j].normal[k] = res[k];
-			}
-			mesh->faces[i].vertexId[j] = i*3 + j;
-		}
+
+		// new set new vertices
+		new_vertex_list[i*3] = v0;
+		new_vertex_list[i*3 + 1] = v1;
+		new_vertex_list[i*3 + 2] = v2;
+
+		// for each vn computed (= num faces), store each (of 3) vertices with vn in new list of size 3*num_faces
+		new_vertex_list[i*3].normal[0]     = res[0];
+		new_vertex_list[i*3 + 1].normal[0] = res[0];
+		new_vertex_list[i*3 + 2].normal[0] = res[0];
+
+		new_vertex_list[i*3].normal[1]     = res[1];
+		new_vertex_list[i*3 + 1].normal[1] = res[1];
+		new_vertex_list[i*3 + 2].normal[1] = res[1];
+
+		new_vertex_list[i*3].normal[2]     = res[2];
+		new_vertex_list[i*3 + 1].normal[2] = res[2];
+		new_vertex_list[i*3 + 2].normal[2] = res[2];
+
+		// point faces to new vertex index
+		mesh->faces[i].vertexId[0] = i*3;
+		mesh->faces[i].vertexId[1] = i*3 + 1;
+		mesh->faces[i].vertexId[2] = i*3 + 2;
 	}
 	free(mesh->vertices);
 	mesh->vertices = new_vertex_list;
@@ -284,6 +197,7 @@ int compute_and_store_vector_normals(Mesh* mesh) {
 }
 
 // @Assuming: vertex_normal[i] = vertex[i] for all i
+// @TODO: speed this up. taking 2 seconds to read 125mb file.
 int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
 	size_t num_vertices = 0;
@@ -311,16 +225,12 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	float pos[3];
 	unsigned int v[3], n[3];
 	while (fgets(buf, 512, file) != NULL) {
-		//printf("%s", buf);
 		if (buf[0] == '\0' || buf[0] == '#') continue;
 		if (buf[0] == 'v' && buf[1] == ' ') {
 			if (sscanf(buf, "v %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
 				mesh->vertices[v_index].pos[0] = pos[0];
 				mesh->vertices[v_index].pos[1] = pos[1];
 				mesh->vertices[v_index].pos[2] = pos[2];
-				//mesh->vertices[v_index].color[0] = 1.0;
-				//mesh->vertices[v_index].color[1] = 1.0;
-				//mesh->vertices[v_index].color[2] = 1.0;
 				++v_index;
 			}
 		}
@@ -346,6 +256,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 			}
 		}
 	}
+	fclose(file);
 
 	if (v_index != num_vertices || f_index != num_faces || (vnormals_enabled && vn_index != num_vnormals)) { 
 		fprintf(stderr, "Failed to read .obj file\n");
@@ -358,76 +269,6 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	return 1;
 }
 
-int malloc_mesh_fields_from_random(Mesh* mesh) {
-	/*float color_palette[5][3] = {
-		{1.0f, 0.0f, 0.0f}, // red
-		{0.0f, 1.0f, 0.0f}, // green
-		{0.0f, 0.0f, 1.0f}, // blue
-		{1.0f, 1.0f, 0.0f}, // yellow
-		{1.0f, 0.0f, 1.0f}  // magenta
-	};*/
-
-	mesh->vertices = (Vertex*)malloc(sizeof(Vertex) * 5);
-	mesh->num_vertices = 5;
-	for (int i = 0; i < 5; i++) {
-		mesh->vertices[i].pos[0] = randf();
-		mesh->vertices[i].pos[1] = randf();
-		mesh->vertices[i].pos[2] = 0;
-		/*for (int j = 0; j < 3; j++) {
-			mesh->vertices[i].color[j] = color_palette[i][j];
-		}*/
-	}
-
-	mesh->faces = (Face*)malloc(sizeof(Face) * 2);
-	mesh->faces[0] = {1, 2, 3};
-	mesh->faces[1] = {3, 4, 5};
-	mesh->num_faces = 2;
-
-	return 1;
-}
-
-// Compile the shader
-GLuint compileShader(GLenum type, const char* source) {
-    GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, NULL);
-    glCompileShader(shader);
-
-    GLint success;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetShaderInfoLog(shader, 512, NULL, infoLog);
-        fprintf(stderr, "Shader Compilation Failed\n%s\n", infoLog);
-        return 0;
-    }
-    return shader;
-}
-
-// compile and link vertex and fragment shaders into a full shader program
-GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource) {
-    GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
-    GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
-
-    GLuint shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
-
-    GLint success;
-    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
-        fprintf(stderr, "Shader Program Linking Failed\n%s\n", infoLog);
-        return 0;
-    }
-
-    // Clean up shaders after linking
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    return shaderProgram;
-}
 
 int addMeshInstanceToGlobalScene(MeshInstance* meshInstance) { 
 	if (global_scene.meshInstanceCount != __MAX_MESHES__)
@@ -621,16 +462,17 @@ void initMeshInstance(MeshInstance* meshInstance) {
 //     4. upload mesh data to GPU buffers
 // return total count of meshes in resource pool
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
-	int num_meshes = 1;
+	int num_meshes = 4;
 	const char *list_of_meshes[] = {
-		"resources/teapot.obj"/*,
+		"resources/teapot.obj",
 		"resources/teapot2.obj",
 		"resources/guy.obj",
-		"resources/large_files/HP_Portrait.obj"*/
+		"resources/large_files/HP_Portrait.obj"
 	};
 	for (int i = 0; i < num_meshes; i++) {
 		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
 		initMesh(mesh);
+		printf("loading mesh from file: %s\n", list_of_meshes[i]);
 		malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh);
 		// if we couldn't load normnals from file, then compute them now
 		// @TODO: write normals back to file?
@@ -688,7 +530,11 @@ int main(int argc, char** argv) {
 		modelpool[i] = (MeshInstance*)malloc(sizeof(MeshInstance));
 		initMeshInstance(modelpool[i]);
 		addMeshInstanceToGlobalScene(modelpool[i]);
-		modelpool[i]->color = glm::vec3(randf()/3.0f + 0.66f, randf()/3.0f + 0.66f, randf()/3.0f + 0.66f);
+		modelpool[i]->color = glm::vec3(
+			((float)rand() / (float)RAND_MAX) * 0.66f + 0.33f,
+			((float)rand() / (float)RAND_MAX) * 0.66f + 0.33f,
+			((float)rand() / (float)RAND_MAX) * 0.66f + 0.33f
+		);
 	}
 
 	// @TEMPORARY: sun object
@@ -715,72 +561,11 @@ int main(int argc, char** argv) {
     const char* glRenderer = (const char*)glGetString(GL_RENDERER);
 
 	// vertex shaders defines the vertex positions on the screen
-	const char* vertexShaderSource = R"(
-		#version 330 core
-		layout(location = 0) in vec3 position;
-		//layout(location = 1) in vec3 color;
-		layout(location = 1) in vec3 vnormal;
-
-		uniform mat4 model;
-		uniform mat4 view;
-		uniform mat4 proj;
-		uniform mat3 normal;
-		uniform vec3 modelColor;
-
-		out vec3 fragPosition;
-		out vec3 fragColor;
-		out vec3 fragNormal;
-		void main() {
-			fragPosition = vec3(model * vec4(position, 1.0));
-			gl_Position = proj * view * vec4(fragPosition, 1.0);
-			
-			fragColor = modelColor;
-			fragNormal = normal * vnormal;
-		}
-	)";
-
 	// vertex information is interpolated to individual pixel information "fragments"
 	// fragment shaders define transformations on interpolated fragments
-	const char* fragmentShaderSource = R"(
-		#version 330 core
-		in vec3 fragPosition;
-		in vec3 fragColor;
-		in vec3 fragNormal;
-
-		uniform vec3 lightPos;
-		uniform vec3 lightColor;
-		uniform vec3 viewPos;
-		uniform bool hasNormals;
-		
-		out vec4 color;
-		void main() {
-			// ambient lighting
-			float ambientStrength = 0.1;
-			vec3 ambient = ambientStrength * lightColor;
-			vec3 diffuse;
-			vec3 specular;
-			if (hasNormals) {
-				// diffuse lighting
-				vec3 norm = normalize(fragNormal);
-				vec3 lightDirection = normalize(lightPos - fragPosition);
-				float diff = max(dot(lightDirection, norm), 0.0f);
-				diffuse = diff * lightColor;
-
-				// specular lighting
-				float specularStrength = 0.5;
-				vec3 viewDirection = normalize(viewPos - fragPosition);
-				vec3 reflectDirection = reflect(-lightDirection, norm);
-				float spec = pow(max(dot(viewDirection, reflectDirection), 0.0), 32);
-				specular = specularStrength * spec * lightColor;
-			} else {
-				diffuse = vec3(1.0);
-				specular = vec3(1.0);
-			}
-			// set the final color
-			color = vec4((ambient + diffuse + specular) * fragColor, 1.0);
-		}
-	)";
-
+	// these char* need to be freed
+	const char* vertexShaderSource = loadShaderSource("src/shaders/basicShader.vs");
+	const char* fragmentShaderSource = loadShaderSource("src/shaders/basicShader.fs");
 	GLuint shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
 
 	// get locations to shader uniforms
@@ -900,6 +685,8 @@ int main(int argc, char** argv) {
 	for (int i = 0; i < num_models; i++) {
 		free(global_scene.meshInstances[i]);
 	}
+	free((void*)vertexShaderSource);
+	free((void*)fragmentShaderSource);
 
     glfwDestroyWindow(window);
     glfwTerminate();
