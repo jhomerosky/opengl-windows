@@ -11,6 +11,7 @@
 #include "structs.cpp"
 #include "math_utils.cpp"
 #include "shaders.cpp"
+#include "glProfile.cpp"
 
 
 // ===== GLOBAL VARS =====
@@ -473,13 +474,17 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
 		initMesh(mesh);
 		printf("loading mesh from file: %s\n", list_of_meshes[i]);
+		tic();
 		malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh);
+		printf("  time for malloc_mesh_fields_from_obj_file of %s: %.9f seconds\n", list_of_meshes[i], toc());
 		// if we couldn't load normnals from file, then compute them now
 		// @TODO: write normals back to file?
+		tic();
 		if (!mesh->has_normals) {
 			printf("Normals not found. Computing normals and rebuilding mesh.\n");
 			compute_and_store_vector_normals(mesh);
 		}
+		printf("  time for compute normals of %s: %.9f seconds\n", list_of_meshes[i], toc());
 		addMeshToResourcePool(mesh);
 		uploadMeshBuffers(mesh);
 	}
