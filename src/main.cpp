@@ -37,7 +37,6 @@ struct Mesh {
 	~Mesh() { free(vertices); free(faces); }
 };
 
-// TODO: add meshinstance 
 struct MeshInstance {
 	Mesh* mesh;
 	glm::mat4 model;
@@ -646,10 +645,6 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	return global_resource_pool.meshCount;
 }
 
-// TODO: loadMeshResources() to load all resources into (global?) mesh objects.
-// Should scene hold all meshes? Should have some other global called ResourceStore?
-// Probably resourcestore, and the logic to add a mesh instance to an object will point to a mesh in the resource store?
-
 void initGlobalScene() {
 	initCamera(global_scene.camera);
 	initLightSource(global_scene.lightSource);
@@ -696,7 +691,7 @@ int main(int argc, char** argv) {
 		modelpool[i]->color = glm::vec3(randf()/3.0f + 0.66f, randf()/3.0f + 0.66f, randf()/3.0f + 0.66f);
 	}
 
-	// TEMPORARY: sun object
+	// @TEMPORARY: sun object
 	MeshInstance sun;
 	initMeshInstance(&sun);
 	sun.model = glm::translate(glm::mat4(1.0f), global_scene.lightSource.pos);
