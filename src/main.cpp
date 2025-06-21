@@ -476,7 +476,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		printf("loading mesh from file: %s\n", list_of_meshes[i]);
 		tic();
 		malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh);
-		printf("  time for malloc_mesh_fields_from_obj_file of %s: %.9f seconds\n", list_of_meshes[i], toc());
+		printf("  TIME LOAD %s: %.6f ms\n", list_of_meshes[i], toc());
 		// if we couldn't load normnals from file, then compute them now
 		// @TODO: write normals back to file?
 		tic();
@@ -484,7 +484,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 			printf("Normals not found. Computing normals and rebuilding mesh.\n");
 			compute_and_store_vector_normals(mesh);
 		}
-		printf("  time for compute normals of %s: %.9f seconds\n", list_of_meshes[i], toc());
+		printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", list_of_meshes[i], toc());
 		addMeshToResourcePool(mesh);
 		uploadMeshBuffers(mesh);
 	}
