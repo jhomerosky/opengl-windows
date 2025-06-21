@@ -627,7 +627,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		"resources/teapot.obj"/*,
 		"resources/teapot2.obj",
 		"resources/guy.obj",
-		"resources/HP_Portrait.obj"*/
+		"resources/large_files/HP_Portrait.obj"*/
 	};
 	for (int i = 0; i < num_meshes; i++) {
 		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
@@ -856,7 +856,7 @@ int main(int argc, char** argv) {
 			// Update model matrix
 			float speed = glm::abs(glm::sin(0.2*i));
 			meshInstance->model = glm::mat4(1.0f);
-			meshInstance->model = glm::translate(meshInstance->model, glm::vec3(i*5.0f, glm::sin(currTime + i), 0.0f)); //i % 5)*5.0f));
+			meshInstance->model = glm::translate(meshInstance->model, glm::vec3((i%45)*5.0f, glm::sin(currTime + i), 5.0*(float)(i/45))); //i % 5)*5.0f));
 			meshInstance->model = glm::rotate(meshInstance->model, (float)(currTime * M_PI * speed), glm::vec3(0.0f, 1.0f, 0.0f));
 
 			// upload color vector to the shader
