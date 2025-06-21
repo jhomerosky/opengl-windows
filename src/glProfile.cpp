@@ -3,4 +3,4 @@
 
 double GLOBAL_lastTime;
 void tic() { GLOBAL_lastTime = glfwGetTime(); }
-double toc() { return glfwGetTime() - GLOBAL_lastTime; }
+double toc() { return (glfwGetTime() - GLOBAL_lastTime) * 1000.0; }
