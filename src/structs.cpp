@@ -51,6 +51,7 @@ struct Camera {
 	float NORMAL_MOVE_SPEED;
 
 	float PAN_SPEED;
+	float TILT_SPEED;
 };
 
 // See initMouseInfo for default vals
