@@ -12,6 +12,7 @@
 #include "math_utils.cpp"
 #include "shaders.cpp"
 #include "glProfile.cpp"
+#include "file_utils.cpp"
 
 
 // ===== GLOBAL VARS =====
@@ -130,7 +131,6 @@ void normalize_mesh_to_unit_box(Mesh& mesh) {
 }
 
 // @Assuming: CCW face orientation, faces are triangles
-// @TODO: parallelize
 // @Mutates the mesh vertex list
 int compute_and_store_vector_normals(Mesh* mesh) {
 	// for each face:
@@ -197,6 +197,85 @@ int compute_and_store_vector_normals(Mesh* mesh) {
 	return 0;
 }
 
+// @TODO: this did not get much faster by loading onto a text blob and parsing that instead
+// but now we may be able to parallelize for speedup
+int faster_malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
+	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
+	size_t num_vertices = 0;
+	size_t num_faces = 0;
+	size_t num_vnormals = 0;
+	bool vnormals_enabled = false;
+
+	// load from file to char*
+    const char* text = mallocTextFromFile(filename);
+
+	// use fgets_str
+	int buffer_size = 512;
+	char buf[buffer_size];
+	long textIndex = 0;
+
+	while (fgets_str(buf, buffer_size, text, &textIndex) > -1) {
+		if (buf[0] == '\0' || buf[0] == '#') continue;
+		if (buf[0] == 'v' && buf[1] == ' ') ++num_vertices;
+		if (buf[0] == 'v' && buf[1] == 'n') ++num_vnormals;
+		if (buf[0] == 'f') ++num_faces;
+	}
+	textIndex = 0;
+	if (num_vnormals == num_vertices) vnormals_enabled = true;
+
+	mesh->vertices = (Vertex*)malloc(sizeof(Vertex)*num_vertices);
+	mesh->faces = (Face*)malloc(sizeof(Face)*num_faces);
+
+	size_t v_index = 0;
+	size_t vn_index = 0;
+	size_t f_index = 0;
+	float pos[3];
+	unsigned int v[3], n[3];
+	while (fgets_str(buf, buffer_size, text, &textIndex) > -1) {
+		if (buf[0] == '\0' || buf[0] == '#') continue;
+		if (buf[0] == 'v' && buf[1] == ' ') {
+			if (sscanf(buf, "v %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
+				mesh->vertices[v_index].pos[0] = pos[0];
+				mesh->vertices[v_index].pos[1] = pos[1];
+				mesh->vertices[v_index].pos[2] = pos[2];
+				++v_index;
+			}
+		}
+		if (vnormals_enabled && buf[0] == 'v' && buf[1] == 'n') {
+			if (sscanf(buf, "vn %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
+				mesh->vertices[vn_index].normal[0] = pos[0];
+				mesh->vertices[vn_index].normal[1] = pos[1];
+				mesh->vertices[vn_index].normal[2] = pos[2];
+				++vn_index;
+			}
+		}
+		if (buf[0] == 'f') {
+			if (sscanf(buf, "f %u//%u %u//%u %u//%u", &v[0], &n[0], &v[1], &n[1], &v[2], &n[2]) == 6) {
+				mesh->faces[f_index].vertexId[0] = v[0] - 1;
+				mesh->faces[f_index].vertexId[1] = v[1] - 1;
+				mesh->faces[f_index].vertexId[2] = v[2] - 1;
+				++f_index;
+			} else if (sscanf(buf, "f %u %u %u", &v[0], &v[1], &v[2]) == 3) {
+				mesh->faces[f_index].vertexId[0] = v[0] - 1;
+				mesh->faces[f_index].vertexId[1] = v[1] - 1;
+				mesh->faces[f_index].vertexId[2] = v[2] - 1;
+				++f_index;
+			}
+		}
+	}
+	free((void*)text);
+
+	if (v_index != num_vertices || f_index != num_faces || (vnormals_enabled && vn_index != num_vnormals)) { 
+		fprintf(stderr, "Failed to read .obj file\n");
+		return 0;
+	}
+
+	mesh->num_vertices = num_vertices;
+	mesh->num_faces = num_faces;
+	mesh->has_normals = vnormals_enabled;
+	return 1;
+}
+
 // @Assuming: vertex_normal[i] = vertex[i] for all i
 // @TODO: speed this up. taking 2 seconds to read 125mb file.
 int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
@@ -219,7 +298,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 
 	mesh->vertices = (Vertex*)malloc(sizeof(Vertex)*num_vertices);
 	mesh->faces = (Face*)malloc(sizeof(Face)*num_faces);
-
+	
 	size_t v_index = 0;
 	size_t vn_index = 0;
 	size_t f_index = 0;
@@ -258,7 +337,6 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 		}
 	}
 	fclose(file);
-
 	if (v_index != num_vertices || f_index != num_faces || (vnormals_enabled && vn_index != num_vnormals)) { 
 		fprintf(stderr, "Failed to read .obj file\n");
 		return 0;
@@ -311,6 +389,24 @@ void swapCursorInputMode(GLFWwindow* window) {
 	}
 }
 
+void tiltCamera(GLFWwindow* window, float angle) {
+	Camera* camera = &(global_scene.camera);
+
+	camera->pitch += angle;
+
+	if (camera->pitch > 89.0f)
+		camera->pitch = 89.0f;
+	else if (camera->pitch < -89.0f)
+		camera->pitch = -89.0f;
+
+	float direction[3];
+	direction[0] = cos(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
+	direction[1] = sin(radiansf(camera->pitch));
+	direction[2] = sin(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
+	normalize_in_place(direction);
+	camera->front = glm::vec3(direction[0], direction[1], direction[2]);
+}
+
 void panCamera(GLFWwindow* window, float angle) {
 	Camera* camera = &(global_scene.camera);
 
@@ -356,6 +452,14 @@ void processInput(GLFWwindow* window, float deltaTime) {
 		camera->speed = camera->NORMAL_MOVE_SPEED;
 	}
 
+	if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+		tiltCamera(window, camera->TILT_SPEED * deltaTime);
+	}
+
+	if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+		tiltCamera(window, -camera->TILT_SPEED * deltaTime);
+	}
+
 	if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
 		panCamera(window, -camera->PAN_SPEED * deltaTime);
 	}
@@ -393,10 +497,11 @@ void initCamera(Camera& camera) {
 	camera.NORMAL_MOVE_SPEED = 5.0f;
 
 	camera.PAN_SPEED = 90.0f;
+	camera.TILT_SPEED = 45.0f;
 }
 
 void initLightSource(LightSource& lightSource) {
-	lightSource.pos = glm::vec3(5.0f, 5.0f, 15.0f);
+	lightSource.pos = glm::vec3(5.0f, 50.0f, 15.0f);
 	lightSource.color = glm::vec3(1.0f, 1.0f, 1.0f);
 }
 
@@ -475,7 +580,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		initMesh(mesh);
 		printf("loading mesh from file: %s\n", list_of_meshes[i]);
 		tic();
-		malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh);
+		faster_malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh);
 		printf("  TIME LOAD %s: %.6f ms\n", list_of_meshes[i], toc());
 		// if we couldn't load normnals from file, then compute them now
 		// @TODO: write normals back to file?
