@@ -10,6 +10,7 @@
             "args": [
                 "-g",
                 "-std=c++17",
+                "-fopenmp",
                 "-I${workspaceFolder}/include",
                 "-L${workspaceFolder}/lib",
                 "${workspaceFolder}/src/main.cpp",

@@ -11,7 +11,7 @@
 #include "structs.cpp"
 #include "math_utils.cpp"
 #include "shaders.cpp"
-#include "glProfile.cpp"
+#include "gl_profile.cpp"
 #include "file_utils.cpp"
 
 
@@ -144,7 +144,6 @@ int compute_and_store_vector_normals(Mesh* mesh) {
 
 	#pragma omp parallel for
 	for (int i = 0; i < mesh->num_faces; i++) {
-		//printf("omp num threads: %d\n", omp_get_num_threads());
 		// private memory
 		float e1[3];
 		float e2[3];
@@ -210,59 +209,66 @@ int faster_malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
     const char* text = mallocTextFromFile(filename);
 
 	// use fgets_str
-	int buffer_size = 512;
+	const int buffer_size = 512;
 	char buf[buffer_size];
 	long textIndex = 0;
-
-	while (fgets_str(buf, buffer_size, text, &textIndex) > -1) {
-		if (buf[0] == '\0' || buf[0] == '#') continue;
+	
+	while (fgets_str(buf, buffer_size, text, &textIndex) >= 0) {
 		if (buf[0] == 'v' && buf[1] == ' ') ++num_vertices;
-		if (buf[0] == 'v' && buf[1] == 'n') ++num_vnormals;
-		if (buf[0] == 'f') ++num_faces;
+		else if (buf[0] == 'v' && buf[1] == 'n') ++num_vnormals;
+		else if (buf[0] == 'f') ++num_faces;
 	}
+	
 	textIndex = 0;
 	if (num_vnormals == num_vertices) vnormals_enabled = true;
 
+	
 	mesh->vertices = (Vertex*)malloc(sizeof(Vertex)*num_vertices);
 	mesh->faces = (Face*)malloc(sizeof(Face)*num_faces);
+	
 
 	size_t v_index = 0;
 	size_t vn_index = 0;
 	size_t f_index = 0;
 	float pos[3];
 	unsigned int v[3], n[3];
-	while (fgets_str(buf, buffer_size, text, &textIndex) > -1) {
-		if (buf[0] == '\0' || buf[0] == '#') continue;
+	while (fgets_str(buf, buffer_size, text, &textIndex) >= 0) {
 		if (buf[0] == 'v' && buf[1] == ' ') {
-			if (sscanf(buf, "v %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
-				mesh->vertices[v_index].pos[0] = pos[0];
-				mesh->vertices[v_index].pos[1] = pos[1];
-				mesh->vertices[v_index].pos[2] = pos[2];
-				++v_index;
+			char* p = buf + 2;
+			skip_whitespace(&p);
+			mesh->vertices[v_index].pos[0] = fast_atof(&p);
+			skip_whitespace(&p);
+			mesh->vertices[v_index].pos[1] = fast_atof(&p);
+			skip_whitespace(&p);
+			mesh->vertices[v_index].pos[2] = fast_atof(&p);
+			++v_index;
+		} else if (buf[0] == 'v' && buf[1] == 'n' && vnormals_enabled) {
+			char* p = buf + 2;
+			skip_whitespace(&p);
+			mesh->vertices[vn_index].normal[0] = fast_atof(&p);
+			skip_whitespace(&p);
+			mesh->vertices[vn_index].normal[1] = fast_atof(&p);
+			skip_whitespace(&p);
+			mesh->vertices[vn_index].normal[2] = fast_atof(&p);
+			skip_whitespace(&p);
+			++vn_index;
+		} else if (buf[0] == 'f') {
+			char* p = buf + 1;
+			skip_whitespace(&p);
+			for (int k = 0; k < 3; ++k) {
+				unsigned int v = fast_atou(&p);
+				mesh->faces[f_index].vertexId[k] = v - 1;
+				if (*p == '/') {
+					++p;
+					if (*p == '/') ++p;
+					while (*p >= '0' && *p <= '9') ++p;
+				}
+				skip_whitespace(&p);
 			}
-		}
-		if (vnormals_enabled && buf[0] == 'v' && buf[1] == 'n') {
-			if (sscanf(buf, "vn %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
-				mesh->vertices[vn_index].normal[0] = pos[0];
-				mesh->vertices[vn_index].normal[1] = pos[1];
-				mesh->vertices[vn_index].normal[2] = pos[2];
-				++vn_index;
-			}
-		}
-		if (buf[0] == 'f') {
-			if (sscanf(buf, "f %u//%u %u//%u %u//%u", &v[0], &n[0], &v[1], &n[1], &v[2], &n[2]) == 6) {
-				mesh->faces[f_index].vertexId[0] = v[0] - 1;
-				mesh->faces[f_index].vertexId[1] = v[1] - 1;
-				mesh->faces[f_index].vertexId[2] = v[2] - 1;
-				++f_index;
-			} else if (sscanf(buf, "f %u %u %u", &v[0], &v[1], &v[2]) == 3) {
-				mesh->faces[f_index].vertexId[0] = v[0] - 1;
-				mesh->faces[f_index].vertexId[1] = v[1] - 1;
-				mesh->faces[f_index].vertexId[2] = v[2] - 1;
-				++f_index;
-			}
+			++f_index;
 		}
 	}
+	
 	free((void*)text);
 
 	if (v_index != num_vertices || f_index != num_faces || (vnormals_enabled && vn_index != num_vnormals)) { 
@@ -280,30 +286,48 @@ int faster_malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 // @TODO: speed this up. taking 2 seconds to read 125mb file.
 int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
+	// size of mesh fields
 	size_t num_vertices = 0;
 	size_t num_faces = 0;
 	size_t num_vnormals = 0;
+	// index for writing to mesh fields
+	size_t v_index = 0;
+	size_t vn_index = 0;
+	size_t f_index = 0;
+	// logical flags
 	bool vnormals_enabled = false;
+	bool long_sscanf_format = false;
+	// buffers for sscanf
+	float pos[3];
+	unsigned int v[4], n[4];
+
 
 	char buf[2048];
 	FILE* file = fopen(filename, "r");
 	while (fgets(buf, 2048, file) != NULL) {
 		if (buf[0] == '\0' || buf[0] == '#') continue;
 		if (buf[0] == 'v' && buf[1] == ' ') ++num_vertices;
-		if (buf[0] == 'v' && buf[1] == 'n') ++num_vnormals;
-		if (buf[0] == 'f') ++num_faces;
+		if (buf[0] == 'v' && buf[1] == 'n') {
+			++num_vnormals;
+			long_sscanf_format = true;
+		}
+		if (buf[0] == 'f') {
+			// check if this is a quad
+			int count = 0;
+			for (char* p = buf; *(p + 1) != '\0'; p++) { 
+				if (*p == ' ' && *(p+1) >= '0' && *(p+1) <= '9')
+					count++;
+			}
+			if (count == 4) 
+				num_faces++;
+			num_faces++;
+		}
 	}
 	rewind(file);
 	if (num_vnormals == num_vertices) vnormals_enabled = true;
-
 	mesh->vertices = (Vertex*)malloc(sizeof(Vertex)*num_vertices);
 	mesh->faces = (Face*)malloc(sizeof(Face)*num_faces);
 	
-	size_t v_index = 0;
-	size_t vn_index = 0;
-	size_t f_index = 0;
-	float pos[3];
-	unsigned int v[3], n[3];
 	while (fgets(buf, 512, file) != NULL) {
 		if (buf[0] == '\0' || buf[0] == '#') continue;
 		if (buf[0] == 'v' && buf[1] == ' ') {
@@ -323,22 +347,50 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 			}
 		}
 		if (buf[0] == 'f') {
-			if (sscanf(buf, "f %u//%u %u//%u %u//%u", &v[0], &n[0], &v[1], &n[1], &v[2], &n[2]) == 6) {
+			int res;
+			bool is_quad = false;
+			bool is_good = false;
+			// change sscanf based on presence of vnormals
+			if (long_sscanf_format) {
+				res = sscanf(buf, "f %u//%u %u//%u %u//%u %u//%u", &v[0], &n[0], &v[1], &n[1], &v[2], &n[2], &v[3], &n[3]);
+				//printf("long sscanf res=%d\n",res);
+				if (res == 6 || res == 8)
+					is_good = true;
+			} else {
+				res = sscanf(buf, "f %u %u %u %u", &v[0], &v[1], &v[2], &v[3]);
+				//printf("short sscanf res=%d\n",res);
+				if (res == 3 || res == 4)
+					is_good = true;
+			}
+
+			// if this is a quad, set flag
+			if (res == 4 || res == 8)
+				is_quad = true;
+			
+			// if parse was good
+			if (is_good) {
 				mesh->faces[f_index].vertexId[0] = v[0] - 1;
 				mesh->faces[f_index].vertexId[1] = v[1] - 1;
 				mesh->faces[f_index].vertexId[2] = v[2] - 1;
 				++f_index;
-			} else if (sscanf(buf, "f %u %u %u", &v[0], &v[1], &v[2]) == 3) {
-				mesh->faces[f_index].vertexId[0] = v[0] - 1;
-				mesh->faces[f_index].vertexId[1] = v[1] - 1;
-				mesh->faces[f_index].vertexId[2] = v[2] - 1;
-				++f_index;
+				// second triangle of the quad
+				if (is_quad) {
+					mesh->faces[f_index].vertexId[0] = v[2] - 1;
+					mesh->faces[f_index].vertexId[1] = v[3] - 1;
+					mesh->faces[f_index].vertexId[2] = v[0] - 1;
+					++f_index;
+				}
+			} else {
+				//printf("%s\n",buf);
 			}
 		}
 	}
 	fclose(file);
 	if (v_index != num_vertices || f_index != num_faces || (vnormals_enabled && vn_index != num_vnormals)) { 
 		fprintf(stderr, "Failed to read .obj file\n");
+		if (v_index != num_vertices) printf("vertex mismatch: %d %d\n", v_index, num_vertices);
+		if (f_index != num_faces) printf("faces mismatch: %d %d\n", f_index, num_faces);
+		if (vnormals_enabled && vn_index != num_vnormals) printf("normal mismatch: %d %d\n", vn_index, num_vnormals);
 		return 0;
 	}
 
@@ -347,7 +399,6 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	mesh->has_normals = vnormals_enabled;
 	return 1;
 }
-
 
 int addMeshInstanceToGlobalScene(MeshInstance* meshInstance) { 
 	if (global_scene.meshInstanceCount != __MAX_MESHES__)
@@ -573,14 +624,16 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		"resources/teapot.obj",
 		"resources/teapot2.obj",
 		"resources/guy.obj",
-		"resources/large_files/HP_Portrait.obj"
+		"resources/elf.obj",
+		"resources/large_files/kayle.obj"
 	};
 	for (int i = 0; i < num_meshes; i++) {
 		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
 		initMesh(mesh);
 		printf("loading mesh from file: %s\n", list_of_meshes[i]);
 		tic();
-		faster_malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh);
+		malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh);
+		//faster_malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh);
 		printf("  TIME LOAD %s: %.6f ms\n", list_of_meshes[i], toc());
 		// if we couldn't load normnals from file, then compute them now
 		// @TODO: write normals back to file?
@@ -649,10 +702,17 @@ int main(int argc, char** argv) {
 
 	// @TEMPORARY: sun object
 	MeshInstance sun;
-	initMeshInstance(&sun);
+	sun.mesh = global_resource_pool.meshes[0];
 	sun.model = glm::translate(glm::mat4(1.0f), global_scene.lightSource.pos);
 	sun.color = glm::vec3(1.0f, 1.0f, 1.0f);
-	glm::mat4 sunNormal = glm::mat3(glm::transpose(glm::inverse(sun.model)));
+	glm::mat3 sunNormal = glm::mat3(glm::transpose(glm::inverse(sun.model)));
+
+	// @TEMPORARY: high poly object
+	MeshInstance stress;
+	stress.mesh = global_resource_pool.meshes[2];
+	stress.model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -10.0f)), glm::vec3(5.0f));
+	stress.color = glm::vec3(1.0f, 1.0f, 1.0f);
+	glm::mat3 stressNormal = glm::mat3(glm::transpose(glm::inverse(stress.model)));
 	
 	// init vars for fps counter
 	float lastTime;
@@ -733,6 +793,16 @@ int main(int argc, char** argv) {
 		glUseProgram(shaderProgram);
 		glDrawElements(GL_TRIANGLES, sun.mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
 		// End render sun
+
+		// Render stress
+		glBindVertexArray(stress.mesh->VAO);
+		glUniform3fv(modelColorLoc, 1, glm::value_ptr(stress.color));
+		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(stress.model));
+		glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(stressNormal));
+		glUniform1i(hasNormalsLoc, stress.mesh->has_normals);
+		glUseProgram(shaderProgram);
+		glDrawElements(GL_TRIANGLES, stress.mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
+		// End render stress
 
 		// Loop through the scene, build and upload the model matrix, then draw
 		for (int i = 0; i < global_scene.meshInstanceCount; i++) {
