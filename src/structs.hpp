@@ -4,7 +4,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #define __MAX_MESHES__ 2048
-#define __MAX_MODELS__ 2048
+#define __MAX_MODELS__ 65536
 
 struct Vertex {
 	float pos[3];

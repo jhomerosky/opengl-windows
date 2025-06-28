@@ -8,11 +8,11 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <omp.h>
 
-#include "structs.cpp"
-#include "math_utils.cpp"
-#include "shaders.cpp"
-#include "gl_profile.cpp"
-#include "file_utils.cpp"
+#include "structs.hpp"
+#include "math_utils.hpp"
+#include "shaders.hpp"
+#include "gl_profile.hpp"
+#include "file_utils.hpp"
 
 
 // ===== GLOBAL VARS =====
@@ -92,10 +92,6 @@ void print_mesh_to_stdout(const Mesh& mesh) {
 		printf("Normal vectors NOT found.\n");
 
 	printf("End mesh printing.\n");
-}
-
-void print_global_scene_to_stdout() {
-	printf("scene printing not developed yet\n");
 }
 // ===== END PRINT FUNCTIONS =====
 
@@ -196,6 +192,7 @@ int compute_and_store_vector_normals(Mesh* mesh) {
 	return 0;
 }
 
+/* @TODO: match enhancements made to malloc_mesh_fields_from_obj_file before this can be used again
 // @TODO: this did not get much faster by loading onto a text blob and parsing that instead
 // but now we may be able to parallelize for speedup
 int faster_malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
@@ -280,7 +277,7 @@ int faster_malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	mesh->num_faces = num_faces;
 	mesh->has_normals = vnormals_enabled;
 	return 1;
-}
+}*/
 
 // @Assuming: vertex_normal[i] = vertex[i] for all i
 // @TODO: speed this up. taking 2 seconds to read 125mb file.
@@ -397,13 +394,13 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 }
 
 int addMeshInstanceToGlobalScene(MeshInstance* meshInstance) { 
-	if (global_scene.meshInstanceCount != __MAX_MESHES__)
+	if (global_scene.meshInstanceCount != __MAX_MODELS__)
 		global_scene.meshInstances[global_scene.meshInstanceCount++] = meshInstance;
 	return global_scene.meshInstanceCount;
 }
 
 int addMeshToResourcePool(Mesh* mesh) {
-	if (global_resource_pool.meshCount != __MAX_MODELS__)
+	if (global_resource_pool.meshCount != __MAX_MESHES__)
 		global_resource_pool.meshes[global_resource_pool.meshCount++] = mesh;
 	return global_resource_pool.meshCount;
 }
@@ -419,6 +416,9 @@ void uploadMeshBuffers(const Mesh *mesh) {
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * 3 * mesh->num_faces, mesh->faces, GL_STATIC_DRAW);
 }
 
+// swap between fps mode and normal mode
+// GLFW_CURSOR_DISABLED - disable cursor and center mouse like fps game
+// GLFW_CURSOR_NORMAL - normal cursor
 void swapCursorInputMode(GLFWwindow* window) {
 	MouseInfo *mouse = &(global_scene.mouse);
 	float now = glfwGetTime();
@@ -436,28 +436,16 @@ void swapCursorInputMode(GLFWwindow* window) {
 	}
 }
 
-void tiltCamera(GLFWwindow* window, float angle) {
+void rotateCamera(GLFWwindow* window, float yaw, float pitch) {
 	Camera* camera = &(global_scene.camera);
 
-	camera->pitch += angle;
+	camera->yaw += yaw;
+	camera->pitch += pitch;
 
 	if (camera->pitch > 89.0f)
 		camera->pitch = 89.0f;
 	else if (camera->pitch < -89.0f)
 		camera->pitch = -89.0f;
-
-	float direction[3];
-	direction[0] = cos(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
-	direction[1] = sin(radiansf(camera->pitch));
-	direction[2] = sin(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
-	normalize_in_place(direction);
-	camera->front = glm::vec3(direction[0], direction[1], direction[2]);
-}
-
-void panCamera(GLFWwindow* window, float angle) {
-	Camera* camera = &(global_scene.camera);
-
-	camera->yaw += angle;
 
 	float direction[3];
 	direction[0] = cos(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
@@ -500,19 +488,19 @@ void processInput(GLFWwindow* window, float deltaTime) {
 	}
 
 	if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
-		tiltCamera(window, camera->TILT_SPEED * deltaTime);
+		rotateCamera(window, 0.0f, camera->TILT_SPEED * deltaTime);
 	}
 
 	if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
-		tiltCamera(window, -camera->TILT_SPEED * deltaTime);
+		rotateCamera(window, 0.0f, -camera->TILT_SPEED * deltaTime);
 	}
 
 	if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
-		panCamera(window, -camera->PAN_SPEED * deltaTime);
+		rotateCamera(window, -camera->PAN_SPEED * deltaTime, 0.0f);
 	}
 
 	if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
-		panCamera(window, camera->PAN_SPEED * deltaTime);
+		rotateCamera(window, camera->PAN_SPEED * deltaTime, 0.0f);
 	}
 
 }
@@ -615,7 +603,7 @@ void initMeshInstance(MeshInstance* meshInstance) {
 //     4. upload mesh data to GPU buffers
 // return total count of meshes in resource pool
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
-	int num_meshes = 5; // @ THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
+	int num_meshes = 3; // @ THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
 		"resources/teapot.obj",
 		"resources/teapot2.obj",
@@ -685,8 +673,8 @@ int main(int argc, char** argv) {
 
 	int num_meshes = initGlobalResourcePoolMallocMeshAndMeshFields();
 
-	int num_models = __MAX_MODELS__;
-	MeshInstance* modelpool[__MAX_MODELS__];
+	const int num_models = 2048;
+	MeshInstance* modelpool[num_models];
 	for (int i = 0; i < num_models; i++) {
 		modelpool[i] = (MeshInstance*)malloc(sizeof(MeshInstance));
 		initMeshInstance(modelpool[i]);
@@ -697,6 +685,7 @@ int main(int argc, char** argv) {
 			((float)rand() / (float)RAND_MAX) * 0.66f + 0.33f
 		);
 	}
+	printf("num_models=%d\n",num_models);
 
 	// @TEMPORARY: sun object
 	MeshInstance sun;
@@ -705,12 +694,12 @@ int main(int argc, char** argv) {
 	sun.color = glm::vec3(1.0f, 1.0f, 1.0f);
 	glm::mat3 sunNormal = glm::mat3(glm::transpose(glm::inverse(sun.model)));
 
-	// @TEMPORARY: high poly object
-	MeshInstance stress;
-	stress.mesh = global_resource_pool.meshes[4];
-	stress.model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -10.0f)), glm::vec3(5.0f));
-	stress.color = glm::vec3(1.0f, 1.0f, 1.0f);
-	glm::mat3 stressNormal = glm::mat3(glm::transpose(glm::inverse(stress.model)));
+	// // @TEMPORARY: high poly object
+	// MeshInstance stress;
+	// stress.mesh = global_resource_pool.meshes[4];
+	// stress.model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -10.0f)), glm::vec3(5.0f));
+	// stress.color = glm::vec3(1.0f, 1.0f, 1.0f);
+	// glm::mat3 stressNormal = glm::mat3(glm::transpose(glm::inverse(stress.model)));
 	
 	// init vars for fps counter
 	float lastTime;
@@ -792,15 +781,15 @@ int main(int argc, char** argv) {
 		glDrawElements(GL_TRIANGLES, sun.mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
 		// End render sun
 
-		// Render stress
-		glBindVertexArray(stress.mesh->VAO);
-		glUniform3fv(modelColorLoc, 1, glm::value_ptr(stress.color));
-		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(stress.model));
-		glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(stressNormal));
-		glUniform1i(hasNormalsLoc, stress.mesh->has_normals);
-		glUseProgram(shaderProgram);
-		glDrawElements(GL_TRIANGLES, stress.mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
-		// End render stress
+		// // Render stress
+		// glBindVertexArray(stress.mesh->VAO);
+		// glUniform3fv(modelColorLoc, 1, glm::value_ptr(stress.color));
+		// glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(stress.model));
+		// glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(stressNormal));
+		// glUniform1i(hasNormalsLoc, stress.mesh->has_normals);
+		// glUseProgram(shaderProgram);
+		// glDrawElements(GL_TRIANGLES, stress.mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
+		// // End render stress
 
 		// Loop through the scene, build and upload the model matrix, then draw
 		for (int i = 0; i < global_scene.meshInstanceCount; i++) {

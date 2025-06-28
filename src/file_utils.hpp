@@ -1,54 +1,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-// for optimized .obj loading
-static inline void skip_whitespace(char** p) {
-    while (**p == ' ' || **p == '\t') ++(*p);
-}
-
-// for optimized .obj loading
-static inline unsigned int fast_atou(char** p) {
-    unsigned int result = 0;
-    while (**p >= '0' && **p <= '9') {
-        result = result * 10 + (**p - '0');
-        ++(*p);
-    }
-    return result;
-}
-
-// for optimized .obj loading
-static inline float fast_atof(char** p) {
-    float result = 0.0f;
-    int sign = 1;
-
-    // Handle optional sign
-    if (**p == '-') {
-        sign = -1;
-        ++(*p);
-    } else if (**p == '+') {
-        ++(*p);
-    }
-
-    // Parse integer part
-    while (**p >= '0' && **p <= '9') {
-        result = result * 10.0f + (**p - '0');
-        ++(*p);
-    }
-
-    // Parse fractional part
-    if (**p == '.') {
-        ++(*p);
-        float frac = 0.0f, base = 0.1f;
-        while (**p >= '0' && **p <= '9') {
-            frac += (**p - '0') * base;
-            base *= 0.1f;
-            ++(*p);
-        }
-        result += frac;
-    }
-
-    return sign * result;
-}
+// ===== header =====
+int fgets_str(char* buf, int max_length, const char* text, long* text_index);
+const char* mallocTextFromFile(const char* filename);
+// ===== end header =====
 
 // for optimized .obj loading
 int fgets_str(char* buf, int max_length, const char* text, long* text_index) {
@@ -71,6 +27,7 @@ int fgets_str(char* buf, int max_length, const char* text, long* text_index) {
     return buffer_index;
 }
 
+// reads text file onto a new string
 const char* mallocTextFromFile(const char* filename) {
     FILE* file = fopen(filename, "r");
     if (!file) { fprintf(stderr, "Failed to open text file: %s\n", filename); return NULL; }

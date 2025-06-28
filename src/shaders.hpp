@@ -2,6 +2,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+// ===== header =====
+const char* loadShaderSource(const char* filename);
+GLuint compileShader(GLenum type, const char* source);
+// ===== end header =====
+
 const char* loadShaderSource(const char* filename) {
     FILE* file = fopen(filename, "r");
     if (!file) {
