@@ -476,7 +476,7 @@ void processInput(GLFWwindow* window, float deltaTime) {
 		camera->pos += camera->front * camera->speed * deltaTime;
 
 	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-		camera->pos += glm::cross(camera->up, camera->front) * camera->speed * deltaTime;
+		camera->pos += glm::normalize(glm::cross(camera->up, camera->front)) * camera->speed * deltaTime;
 
 	if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
 		camera->pos += glm::vec3(0.0f, 1.0f, 0.0f) * camera->speed * deltaTime;
@@ -485,7 +485,7 @@ void processInput(GLFWwindow* window, float deltaTime) {
 		camera->pos -= camera->front * camera->speed * deltaTime;
 
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-		camera->pos -= glm::cross(camera->up, camera->front) * camera->speed * deltaTime;
+		camera->pos -= glm::normalize(glm::cross(camera->up, camera->front)) * camera->speed * deltaTime;
 		
 	if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
 		camera->pos -= glm::vec3(0.0f, 1.0f, 0.0f) * camera->speed * deltaTime;
@@ -615,13 +615,14 @@ void initMeshInstance(MeshInstance* meshInstance) {
 //     4. upload mesh data to GPU buffers
 // return total count of meshes in resource pool
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
-	int num_meshes = 5;
+	int num_meshes = 5; // @ THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
 		"resources/teapot.obj",
 		"resources/teapot2.obj",
 		"resources/guy.obj",
 		"resources/elf.obj",
-		"resources/large_files/HP_Portrait.obj"
+		"resources/large_files/HP_Portrait.obj",
+		"resources/large_files/kayle.obj"
 	};
 	for (int i = 0; i < num_meshes; i++) {
 		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
@@ -639,6 +640,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 			compute_and_store_vector_normals(mesh);
 		}
 		printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", list_of_meshes[i], toc());
+		printf("v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
 		addMeshToResourcePool(mesh);
 		uploadMeshBuffers(mesh);
 	}
