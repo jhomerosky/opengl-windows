@@ -1,6 +1,17 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 
+// ===== header =====
+unsigned int getSeed();
+float randf();
+int isNumber(const char *str);
+void cross3f_to_vec3(float v1[3], float v2[3], float res[3]);
+float dot(float u[3], float v[3]);
+void normalize_in_place(float v[3]);
+float maxf(float a, float b);
+static inline float radiansf(float degrees);
+// ===== end header =====
+
 // get a seed for the srand function
 unsigned int getSeed() { 
 	unsigned int seed; 
@@ -42,4 +53,4 @@ float maxf(float a, float b) {
 	return b < a ? a : b;
 }
 
-float radiansf(float degrees) { return degrees * 0.01745329251994329576923690768489f; }
+static inline float radiansf(float degrees) { return degrees * 0.01745329251994329576923690768489f; }
