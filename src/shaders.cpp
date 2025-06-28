@@ -49,14 +49,17 @@ GLuint compileShader(GLenum type, const char* source) {
 
 // compile and link vertex and fragment shaders into a full shader program
 GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource) {
+    // compile shaders
     GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
     GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
 
+    // link shaders to program
     GLuint shaderProgram = glCreateProgram();
     glAttachShader(shaderProgram, vertexShader);
     glAttachShader(shaderProgram, fragmentShader);
     glLinkProgram(shaderProgram);
 
+    // validate
     GLint success;
     glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
     if (!success) {
@@ -66,7 +69,7 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
         return 0;
     }
 
-    // Clean up shaders after linking
+    // clean up shaders after linking
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 

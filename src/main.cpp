@@ -302,10 +302,9 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	unsigned int v[4], n[4];
 
 
-	char buf[2048];
+	char buf[512];
 	FILE* file = fopen(filename, "r");
 	while (fgets(buf, 2048, file) != NULL) {
-		if (buf[0] == '\0' || buf[0] == '#') continue;
 		if (buf[0] == 'v' && buf[1] == ' ') ++num_vertices;
 		if (buf[0] == 'v' && buf[1] == 'n') {
 			++num_vnormals;
@@ -329,7 +328,6 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	mesh->faces = (Face*)malloc(sizeof(Face)*num_faces);
 	
 	while (fgets(buf, 512, file) != NULL) {
-		if (buf[0] == '\0' || buf[0] == '#') continue;
 		if (buf[0] == 'v' && buf[1] == ' ') {
 			if (sscanf(buf, "v %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
 				mesh->vertices[v_index].pos[0] = pos[0];
@@ -380,8 +378,6 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 					mesh->faces[f_index].vertexId[2] = v[0] - 1;
 					++f_index;
 				}
-			} else {
-				//printf("%s\n",buf);
 			}
 		}
 	}
@@ -619,13 +615,13 @@ void initMeshInstance(MeshInstance* meshInstance) {
 //     4. upload mesh data to GPU buffers
 // return total count of meshes in resource pool
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
-	int num_meshes = 4;
+	int num_meshes = 5;
 	const char *list_of_meshes[] = {
 		"resources/teapot.obj",
 		"resources/teapot2.obj",
 		"resources/guy.obj",
 		"resources/elf.obj",
-		"resources/large_files/kayle.obj"
+		"resources/large_files/HP_Portrait.obj"
 	};
 	for (int i = 0; i < num_meshes; i++) {
 		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
@@ -709,7 +705,7 @@ int main(int argc, char** argv) {
 
 	// @TEMPORARY: high poly object
 	MeshInstance stress;
-	stress.mesh = global_resource_pool.meshes[2];
+	stress.mesh = global_resource_pool.meshes[4];
 	stress.model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -10.0f)), glm::vec3(5.0f));
 	stress.color = glm::vec3(1.0f, 1.0f, 1.0f);
 	glm::mat3 stressNormal = glm::mat3(glm::transpose(glm::inverse(stress.model)));
@@ -816,7 +812,7 @@ int main(int argc, char** argv) {
 			// Update model matrix
 			float speed = glm::abs(glm::sin(0.2*i));
 			meshInstance->model = glm::mat4(1.0f);
-			meshInstance->model = glm::translate(meshInstance->model, glm::vec3((i%45)*5.0f, glm::sin(currTime + i), 5.0*(float)(i/45))); //i % 5)*5.0f));
+			meshInstance->model = glm::translate(meshInstance->model, glm::vec3((i%45)*5.0f, glm::sin(currTime + i), 5.0*(float)(i/45)));
 			meshInstance->model = glm::rotate(meshInstance->model, (float)(currTime * M_PI * speed), glm::vec3(0.0f, 1.0f, 0.0f));
 
 			// upload color vector to the shader
