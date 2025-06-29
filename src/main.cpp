@@ -7,6 +7,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <omp.h>
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 
 #include "structs.hpp"
 #include "math_utils.hpp"
@@ -68,16 +70,16 @@ void print_mesh_to_stdout(const Mesh& mesh) {
 	if (mesh.vertices == nullptr) { printf("The mesh is uninitialized\n"); }
 
 	
-	// for (int i = 0; i < mesh.num_vertices; i++) {
-	// 	printf("V[%d] = [ \n", i);
-	// 	printf("  pos { ");
-	// 	for (int j = 0; j < 3; j++) { printf("%.4f ", mesh.vertices[i].pos[j]); }
-	// 	printf("}\n  color { ");
-	// 	for (int j = 0; j < 3; j++) { printf("%.4f ", mesh.vertices[i].color[j]); }
-	// 	printf("}\n  normal { ");
-	// 	for (int j = 0; j < 3; j++) { printf("%.4f ", mesh.vertices[i].normal[j]); }
-	// 	printf("} ]\n");
-	// }
+	for (int i = 0; i < mesh.num_vertices; i++) {
+		printf("V[%d] = [ \n", i);
+		printf("  pos { ");
+		for (int j = 0; j < 3; j++) { printf("%.4f ", mesh.vertices[i].pos[j]); }
+		printf("}\n  normal { ");
+		for (int j = 0; j < 3; j++) { printf("%.4f ", mesh.vertices[i].normal[j]); }
+		printf("}\n  texture { ");
+		for (int j = 0; j < 2; j++) { printf("%.4f ", mesh.vertices[i].texture[j]); }
+		printf("} ]\n");
+	}
 
 	for (int i = 0; i < mesh.num_faces; i++) {
 		printf("F[%d] = [ %d | %d | %d ]\n", i, mesh.faces[i].vertexId[0], mesh.faces[i].vertexId[1], mesh.faces[i].vertexId[2]);
@@ -285,27 +287,36 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
 	// size of mesh fields
 	size_t num_vertices = 0;
-	size_t num_faces = 0;
+	size_t num_uv_coords = 0;
 	size_t num_vnormals = 0;
+	size_t num_faces = 0;
 	// index for writing to mesh fields
 	size_t v_index = 0;
+	size_t vt_index = 0;
 	size_t vn_index = 0;
 	size_t f_index = 0;
 	// logical flags
 	bool vnormals_enabled = false;
-	bool long_sscanf_format = false;
+	bool textures_enabled = false;
+	bool sscanf_include_normals = false;
+	bool sscanf_include_textures = false;
 	// buffers for sscanf
 	float pos[3];
-	unsigned int v[4], n[4];
+	unsigned int v[4], t[4], n[4];
 
 
 	char buf[512];
 	FILE* file = fopen(filename, "r");
 	while (fgets(buf, 2048, file) != NULL) {
 		if (buf[0] == 'v' && buf[1] == ' ') ++num_vertices;
+		if (buf[0] == 'v' && buf[1] == 't') {
+			++num_uv_coords;
+			sscanf_include_textures = true;
+
+		}
 		if (buf[0] == 'v' && buf[1] == 'n') {
 			++num_vnormals;
-			long_sscanf_format = true;
+			sscanf_include_normals = true;
 		}
 		if (buf[0] == 'f') {
 			// check if this is a quad
@@ -320,6 +331,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 		}
 	}
 	rewind(file);
+	if (num_uv_coords == num_vertices) textures_enabled = true;
 	if (num_vnormals == num_vertices) vnormals_enabled = true;
 	mesh->vertices = (Vertex*)malloc(sizeof(Vertex)*num_vertices);
 	mesh->faces = (Face*)malloc(sizeof(Face)*num_faces);
@@ -331,6 +343,13 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 				mesh->vertices[v_index].pos[1] = pos[1];
 				mesh->vertices[v_index].pos[2] = pos[2];
 				++v_index;
+			}
+		}
+		if (textures_enabled && buf[0] == 'v' && buf[1] == 't') {
+			if (sscanf(buf, "vt %f %f", &pos[0], &pos[1]) == 2) {
+				mesh->vertices[vt_index].texture[0] = pos[0];
+				mesh->vertices[vt_index].texture[1] = pos[1];
+				++vt_index;
 			}
 		}
 		if (vnormals_enabled && buf[0] == 'v' && buf[1] == 'n') {
@@ -346,20 +365,23 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 			bool is_quad = false;
 			bool is_good = false;
 			// change sscanf based on presence of vnormals
-			if (long_sscanf_format) {
+			if (sscanf_include_textures && sscanf_include_normals) {
+				res = sscanf(buf, "f %u/%u/%u %u/%u/%u %u/%u/%u %u/%u/%u", &v[0], &t[0], &n[0], &v[1], &t[1], &n[1], &v[2], &t[2], &n[2], &v[3], &t[3], &n[3]);
+				if (res == 9 || res == 12) {
+					is_good = true;
+				}
+			} else if (sscanf_include_normals) {
 				res = sscanf(buf, "f %u//%u %u//%u %u//%u %u//%u", &v[0], &n[0], &v[1], &n[1], &v[2], &n[2], &v[3], &n[3]);
-				//printf("long sscanf res=%d\n",res);
 				if (res == 6 || res == 8)
 					is_good = true;
 			} else {
 				res = sscanf(buf, "f %u %u %u %u", &v[0], &v[1], &v[2], &v[3]);
-				//printf("short sscanf res=%d\n",res);
 				if (res == 3 || res == 4)
 					is_good = true;
 			}
 
 			// if this is a quad, set flag
-			if (res == 4 || res == 8)
+			if (res == 4 || res == 8 || res == 12)
 				is_quad = true;
 			
 			// if parse was good
@@ -375,15 +397,33 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 					mesh->faces[f_index].vertexId[2] = v[0] - 1;
 					++f_index;
 				}
+			} else {
+				printf("is_good=false in malloc_mesh_fields_from_obj_file\n");
+				printf("sscanf_include_normals=%d | is_quad=%d | res=%d\n", sscanf_include_normals, is_quad, res);
 			}
 		}
 	}
 	fclose(file);
 	if (v_index != num_vertices || f_index != num_faces || (vnormals_enabled && vn_index != num_vnormals)) { 
-		fprintf(stderr, "Failed to read .obj file\n");
-		if (v_index != num_vertices) printf("vertex mismatch: %d %d\n", v_index, num_vertices);
-		if (f_index != num_faces) printf("faces mismatch: %d %d\n", f_index, num_faces);
-		if (vnormals_enabled && vn_index != num_vnormals) printf("normal mismatch: %d %d\n", vn_index, num_vnormals);
+		fprintf(stderr, "Failed to read .obj file:\n");
+		if (v_index != num_vertices) printf("  -->");
+		printf("  vertex mismatch: %d %d\n", v_index, num_vertices);
+		if (f_index != num_faces) printf("  -->");
+		printf("  faces mismatch: %d %d\n", f_index, num_faces);
+		if (textures_enabled) {
+			if (vt_index != num_uv_coords) printf("  -->");
+			printf("  texture mismatch: %d %d\n", vt_index, num_uv_coords);
+		} else {
+			printf("  textures disabled\n");
+		}
+		if (vnormals_enabled) {
+			if (vn_index != num_vnormals) printf("  -->");
+			printf("  normal mismatch: %d %d\n", vn_index, num_vnormals);
+		} else {
+			printf("  normals disabled\n");
+		}
+
+		
 		return 0;
 	}
 
@@ -502,7 +542,6 @@ void processInput(GLFWwindow* window, float deltaTime) {
 	if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
 		rotateCamera(window, camera->PAN_SPEED * deltaTime, 0.0f);
 	}
-
 }
 
 // ===== INIT FUNCTIONS ===== 
@@ -553,7 +592,7 @@ void initMouseInfo(MouseInfo& mouse) {
 int initMesh(Mesh* mesh) {
 	// init values
 	mesh->vertices = nullptr;
-	mesh->faces = nullptr;
+	mesh->faces = nullptr; 
 	mesh->num_vertices = 0;
 	mesh->num_faces = 0;
 	mesh->has_normals = false;
@@ -576,10 +615,10 @@ int initMesh(Mesh* mesh) {
 	// Configure vertex attributes
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0); // Position
 	glEnableVertexAttribArray(0);
-	//glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float))); // Color
-	//glEnableVertexAttribArray(1);
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float))); // Vector normals
 	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(6 * sizeof(float))); // Texture coordinates
+	glEnableVertexAttribArray(2);
 
 	// Unbind this VAO
 	glBindVertexArray(0);
@@ -588,8 +627,9 @@ int initMesh(Mesh* mesh) {
 }
 
 // hardcodes which mesh to load
-void initMeshInstance(MeshInstance* meshInstance) {
+void setDefaultMeshInstance(MeshInstance* meshInstance) {
 	meshInstance->mesh = global_resource_pool.meshes[0]; // teapot.obj
+	meshInstance->texture = nullptr;
 	meshInstance->model = glm::mat4(1.0f);
 	meshInstance->color = glm::vec3(1.0f, 1.0f, 1.0f);
 }
@@ -603,12 +643,12 @@ void initMeshInstance(MeshInstance* meshInstance) {
 //     4. upload mesh data to GPU buffers
 // return total count of meshes in resource pool
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
-	int num_meshes = 3; // @ THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
+	int num_meshes = 5; // @ THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
-		"resources/teapot.obj",
-		"resources/teapot2.obj",
-		"resources/guy.obj",
-		"resources/elf.obj",
+		"resources/mesh/teapot.obj",
+		"resources/mesh/teapot2.obj",
+		"resources/mesh/guy.obj", // ending here
+		"resources/mesh/elf.obj",
 		"resources/large_files/HP_Portrait.obj",
 		"resources/large_files/kayle.obj"
 	};
@@ -622,13 +662,14 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		printf("  TIME LOAD %s: %.6f ms\n", list_of_meshes[i], toc());
 		// if we couldn't load normnals from file, then compute them now
 		// @TODO: write normals back to file?
-		tic();
+		
 		if (!mesh->has_normals) {
-			printf("Normals not found. Computing normals and rebuilding mesh.\n");
+			printf("  Normals not found. Computing normals and rebuilding mesh.\n");
+			tic();
 			compute_and_store_vector_normals(mesh);
+			printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", list_of_meshes[i], toc());
 		}
-		printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", list_of_meshes[i], toc());
-		printf("v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
+		printf("  v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
 		addMeshToResourcePool(mesh);
 		uploadMeshBuffers(mesh);
 	}
@@ -647,6 +688,7 @@ void initGlobalScene() {
 int main(int argc, char** argv) {
 	srand(getSeed());
 
+	// ===== SETUP OPENGL =====
 	// init glfw
     if (!glfwInit()) { fprintf(stderr, "Failed to initialize GLFW\n"); return -1; }
 	
@@ -666,18 +708,21 @@ int main(int argc, char** argv) {
 
 	// called when window size changes
 	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+	// ==== END SETUP OPENGL =====
 
 	// initialize
 	initOpenGL();
 	initGlobalScene();
 
+	// ideally, buildScene()
 	int num_meshes = initGlobalResourcePoolMallocMeshAndMeshFields();
 
+	// init models to scene
 	const int num_models = 2048;
 	MeshInstance* modelpool[num_models];
 	for (int i = 0; i < num_models; i++) {
 		modelpool[i] = (MeshInstance*)malloc(sizeof(MeshInstance));
-		initMeshInstance(modelpool[i]);
+		setDefaultMeshInstance(modelpool[i]);
 		addMeshInstanceToGlobalScene(modelpool[i]);
 		modelpool[i]->color = glm::vec3(
 			((float)rand() / (float)RAND_MAX) * 0.66f + 0.33f,
@@ -690,16 +735,89 @@ int main(int argc, char** argv) {
 	// @TEMPORARY: sun object
 	MeshInstance sun;
 	sun.mesh = global_resource_pool.meshes[0];
+	sun.texture = nullptr;
 	sun.model = glm::translate(glm::mat4(1.0f), global_scene.lightSource.pos);
 	sun.color = glm::vec3(1.0f, 1.0f, 1.0f);
 	glm::mat3 sunNormal = glm::mat3(glm::transpose(glm::inverse(sun.model)));
 
-	// // @TEMPORARY: high poly object
-	// MeshInstance stress;
-	// stress.mesh = global_resource_pool.meshes[4];
-	// stress.model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -10.0f)), glm::vec3(5.0f));
-	// stress.color = glm::vec3(1.0f, 1.0f, 1.0f);
-	// glm::mat3 stressNormal = glm::mat3(glm::transpose(glm::inverse(stress.model)));
+	// @TEMPORARY: high poly object
+	MeshInstance stress;
+	stress.mesh = global_resource_pool.meshes[4];
+	stress.texture = nullptr;
+	stress.model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -10.0f)), glm::vec3(5.0f));
+	stress.color = glm::vec3(1.0f, 1.0f, 1.0f);
+	glm::mat3 stressNormal = glm::mat3(glm::transpose(glm::inverse(stress.model)));
+
+	// @TEMPORARY: BEGIN TEXTURE TESTING
+	const char* textureBoxMeshFilename = "resources/mesh/box.obj";
+	Mesh* textureBoxMesh = (Mesh*)malloc(sizeof(Mesh));
+	initMesh(textureBoxMesh);
+	printf("loading mesh from file: %s\n", textureBoxMeshFilename);
+	malloc_mesh_fields_from_obj_file(textureBoxMeshFilename, textureBoxMesh);
+	if (!textureBoxMesh->has_normals) {
+		printf("Normals not found. Computing normals and rebuilding mesh.\n");
+		compute_and_store_vector_normals(textureBoxMesh);
+	}
+	addMeshToResourcePool(textureBoxMesh);
+	// manually adding texture coords to one face of the box
+	float textureXCoords[] = {0.0, 0.0, 1.0, 1.0};
+	float textureYCoords[] = {0.0, 1.0, 1.0, 0.0};
+	for (int i = 0; i < textureBoxMesh->num_vertices; i++) {
+		textureBoxMesh->vertices[i].texture[0] = 0.0f;
+		textureBoxMesh->vertices[i].texture[1] = 0.0f;
+	}
+	// triangle 1
+	textureBoxMesh->vertices[textureBoxMesh->faces[0].vertexId[0]].texture[0] = textureXCoords[0];
+	textureBoxMesh->vertices[textureBoxMesh->faces[0].vertexId[1]].texture[0] = textureXCoords[1];	
+	textureBoxMesh->vertices[textureBoxMesh->faces[0].vertexId[2]].texture[0] = textureXCoords[2];
+
+	textureBoxMesh->vertices[textureBoxMesh->faces[0].vertexId[0]].texture[1] = textureYCoords[0];
+	textureBoxMesh->vertices[textureBoxMesh->faces[0].vertexId[1]].texture[1] = textureYCoords[1];
+	textureBoxMesh->vertices[textureBoxMesh->faces[0].vertexId[2]].texture[1] = textureYCoords[2];
+
+	// triangle 2
+	textureBoxMesh->vertices[textureBoxMesh->faces[1].vertexId[0]].texture[0] = textureXCoords[2];
+	textureBoxMesh->vertices[textureBoxMesh->faces[1].vertexId[1]].texture[0] = textureXCoords[3];
+	textureBoxMesh->vertices[textureBoxMesh->faces[1].vertexId[2]].texture[0] = textureXCoords[0];
+
+	textureBoxMesh->vertices[textureBoxMesh->faces[1].vertexId[0]].texture[1] = textureYCoords[2];
+	textureBoxMesh->vertices[textureBoxMesh->faces[1].vertexId[1]].texture[1] = textureYCoords[3];
+	textureBoxMesh->vertices[textureBoxMesh->faces[1].vertexId[2]].texture[1] = textureYCoords[0];
+	// END MANUAL TEXTURE COORDS
+
+	//print_mesh_to_stdout(*textureBoxMesh);
+	uploadMeshBuffers(textureBoxMesh);
+	MeshInstance textureBox;
+	textureBox.mesh = textureBoxMesh;
+	textureBox.texture = nullptr;
+	textureBox.model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(20.0f, 20.0f, 10.0f)), glm::vec3(5.0f));
+	textureBox.color = glm::vec3(100.0f/255.0f, 65.0f/255.0f, 23.0f/255.0f);
+	glm::mat3 textureBoxNormal = glm::mat3(glm::transpose(glm::inverse(textureBox.model)));
+
+	// @TEMPORARY: loading texture for testing
+	Texture awesomeTexture;
+	unsigned int texture;
+	glGenTextures(1, &texture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+
+	// set the texture wrapping/filtering options (on the currently bound texture object)
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);	
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	int textureWidth, textureHeight, nrChannels;
+	unsigned char *textureData = stbi_load("resources/texture/awesomeface.png", &textureWidth, &textureHeight, &nrChannels, 0);
+	if (textureData) {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, textureWidth, textureHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, textureData);
+		glGenerateMipmap(GL_TEXTURE_2D);
+	} else {
+		printf("failed to load texture for awesomeface.png\n");
+	}
+	stbi_image_free(textureData);
+	awesomeTexture.textureID = texture;
+	textureBox.texture = &awesomeTexture;
+	// END TEXTURE TESTING
 	
 	// init vars for fps counter
 	float lastTime;
@@ -733,6 +851,7 @@ int main(int argc, char** argv) {
 	unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
 	unsigned int normLoc = glGetUniformLocation(shaderProgram, "normal");
 	unsigned int hasNormalsLoc = glGetUniformLocation(shaderProgram, "hasNormals");
+	unsigned int hasTextureLoc = glGetUniformLocation(shaderProgram, "hasTexture");
 	unsigned int viewLoc = glGetUniformLocation(shaderProgram, "view");
 	unsigned int projLoc = glGetUniformLocation(shaderProgram, "proj");
 
@@ -752,11 +871,15 @@ int main(int argc, char** argv) {
 		// Handle input
 		processInput(window, deltaTime);
 
-		// Build and upload the view matrix to the shader
+		// Clear the screen buffer
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		// Build and upload the view matrix to the shader (depends on camera update)
+		glUseProgram(shaderProgram);
 		view = glm::lookAt(global_scene.camera.pos, global_scene.camera.pos + global_scene.camera.front, global_scene.camera.up);
 		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
 
-		// Build and upload the projection matrix to the shader
+		// Build and upload the projection matrix to the shader (depends )
 		glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
 		proj = glm::perspective(glm::radians(45.0f), (float)windowWidth / (float)windowHeight, 0.1f, 500.0f);
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(proj));
@@ -768,28 +891,40 @@ int main(int argc, char** argv) {
 		// send camera position to shader
 		glUniform3fv(viewPos, 1, glm::value_ptr(global_scene.camera.pos));
 
-		// Clear the screen buffer
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
 		// Render sun
 		glBindVertexArray(sun.mesh->VAO);
+		glUseProgram(shaderProgram);
 		glUniform3fv(modelColorLoc, 1, glm::value_ptr(sun.color));
 		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(sun.model));
 		glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(sunNormal));
 		glUniform1i(hasNormalsLoc, false);
-		glUseProgram(shaderProgram);
 		glDrawElements(GL_TRIANGLES, sun.mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
 		// End render sun
 
-		// // Render stress
-		// glBindVertexArray(stress.mesh->VAO);
-		// glUniform3fv(modelColorLoc, 1, glm::value_ptr(stress.color));
-		// glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(stress.model));
-		// glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(stressNormal));
-		// glUniform1i(hasNormalsLoc, stress.mesh->has_normals);
-		// glUseProgram(shaderProgram);
-		// glDrawElements(GL_TRIANGLES, stress.mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
-		// // End render stress
+		// Render stress
+		glBindVertexArray(stress.mesh->VAO);
+		glUniform3fv(modelColorLoc, 1, glm::value_ptr(stress.color));
+		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(stress.model));
+		glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(stressNormal));
+		glUniform1i(hasNormalsLoc, stress.mesh->has_normals);
+		glUseProgram(shaderProgram);
+		glDrawElements(GL_TRIANGLES, stress.mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
+		// End render stress
+
+		// Render texture box
+		glBindVertexArray(textureBox.mesh->VAO);
+		glUseProgram(shaderProgram);
+		glUniform3fv(modelColorLoc, 1, glm::value_ptr(textureBox.color));
+		textureBox.model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(20.0f, 20.0f, 10.0f)), glm::vec3(5.0f));
+		textureBox.model = glm::rotate(textureBox.model, (float)(currTime * M_PI * 0.1), glm::vec3(1, sqrt(2), M_PI/3.0f));
+		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(textureBox.model));
+		textureBoxNormal = glm::mat3(glm::transpose(glm::inverse(textureBox.model)));
+		glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(textureBoxNormal));
+		glUniform1i(hasNormalsLoc, textureBox.mesh->has_normals);
+		glUniform1i(hasTextureLoc, true);
+		glBindTexture(GL_TEXTURE_2D, textureBox.texture->textureID);
+		glDrawElements(GL_TRIANGLES, textureBox.mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
+		glUniform1i(hasTextureLoc, false);
 
 		// Loop through the scene, build and upload the model matrix, then draw
 		for (int i = 0; i < global_scene.meshInstanceCount; i++) {
@@ -852,6 +987,7 @@ int main(int argc, char** argv) {
 	for (int i = 0; i < num_models; i++) {
 		free(global_scene.meshInstances[i]);
 	}
+	free(textureBoxMesh);
 	free((void*)vertexShaderSource);
 	free((void*)fragmentShaderSource);
 
