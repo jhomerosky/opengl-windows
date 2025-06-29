@@ -9,6 +9,7 @@
 struct Vertex {
 	float pos[3];
 	float normal[3];
+	float texture[2];
 };
 
 struct Face {
@@ -33,6 +34,7 @@ struct Mesh {
 
 struct MeshInstance {
 	Mesh* mesh;
+	char* texture;
 	glm::mat4 model;
 	glm::vec3 color;
 };

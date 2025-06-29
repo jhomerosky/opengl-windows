@@ -7,6 +7,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <omp.h>
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 
 #include "structs.hpp"
 #include "math_utils.hpp"
@@ -502,7 +504,6 @@ void processInput(GLFWwindow* window, float deltaTime) {
 	if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
 		rotateCamera(window, camera->PAN_SPEED * deltaTime, 0.0f);
 	}
-
 }
 
 // ===== INIT FUNCTIONS ===== 
@@ -553,7 +554,7 @@ void initMouseInfo(MouseInfo& mouse) {
 int initMesh(Mesh* mesh) {
 	// init values
 	mesh->vertices = nullptr;
-	mesh->faces = nullptr;
+	mesh->faces = nullptr; 
 	mesh->num_vertices = 0;
 	mesh->num_faces = 0;
 	mesh->has_normals = false;
@@ -576,10 +577,10 @@ int initMesh(Mesh* mesh) {
 	// Configure vertex attributes
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0); // Position
 	glEnableVertexAttribArray(0);
-	//glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float))); // Color
-	//glEnableVertexAttribArray(1);
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float))); // Vector normals
 	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(6 * sizeof(float))); // Texture coordinates
+	glEnableVertexAttribArray(2);
 
 	// Unbind this VAO
 	glBindVertexArray(0);
@@ -588,8 +589,9 @@ int initMesh(Mesh* mesh) {
 }
 
 // hardcodes which mesh to load
-void initMeshInstance(MeshInstance* meshInstance) {
+void setDefaultMeshInstance(MeshInstance* meshInstance) {
 	meshInstance->mesh = global_resource_pool.meshes[0]; // teapot.obj
+	meshInstance->texture = nullptr;
 	meshInstance->model = glm::mat4(1.0f);
 	meshInstance->color = glm::vec3(1.0f, 1.0f, 1.0f);
 }
@@ -603,12 +605,13 @@ void initMeshInstance(MeshInstance* meshInstance) {
 //     4. upload mesh data to GPU buffers
 // return total count of meshes in resource pool
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
-	int num_meshes = 3; // @ THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
+	int num_meshes = 4; // @ THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
-		"resources/teapot.obj",
-		"resources/teapot2.obj",
-		"resources/guy.obj",
-		"resources/elf.obj",
+		"resources/mesh/teapot.obj",
+		"resources/mesh/teapot2.obj",
+		"resources/mesh/guy.obj",
+		"resources/mesh/box.obj", // ending here
+		"resources/mesh/elf.obj",
 		"resources/large_files/HP_Portrait.obj",
 		"resources/large_files/kayle.obj"
 	};
@@ -647,6 +650,7 @@ void initGlobalScene() {
 int main(int argc, char** argv) {
 	srand(getSeed());
 
+	// ===== SETUP OPENGL =====
 	// init glfw
     if (!glfwInit()) { fprintf(stderr, "Failed to initialize GLFW\n"); return -1; }
 	
@@ -666,18 +670,21 @@ int main(int argc, char** argv) {
 
 	// called when window size changes
 	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+	// ==== END SETUP OPENGL =====
 
 	// initialize
 	initOpenGL();
 	initGlobalScene();
 
+	// ideally, buildScene()
 	int num_meshes = initGlobalResourcePoolMallocMeshAndMeshFields();
 
+	// init models to scene
 	const int num_models = 2048;
 	MeshInstance* modelpool[num_models];
 	for (int i = 0; i < num_models; i++) {
 		modelpool[i] = (MeshInstance*)malloc(sizeof(MeshInstance));
-		initMeshInstance(modelpool[i]);
+		setDefaultMeshInstance(modelpool[i]);
 		addMeshInstanceToGlobalScene(modelpool[i]);
 		modelpool[i]->color = glm::vec3(
 			((float)rand() / (float)RAND_MAX) * 0.66f + 0.33f,
@@ -690,6 +697,7 @@ int main(int argc, char** argv) {
 	// @TEMPORARY: sun object
 	MeshInstance sun;
 	sun.mesh = global_resource_pool.meshes[0];
+	sun.texture = nullptr;
 	sun.model = glm::translate(glm::mat4(1.0f), global_scene.lightSource.pos);
 	sun.color = glm::vec3(1.0f, 1.0f, 1.0f);
 	glm::mat3 sunNormal = glm::mat3(glm::transpose(glm::inverse(sun.model)));
@@ -697,9 +705,40 @@ int main(int argc, char** argv) {
 	// // @TEMPORARY: high poly object
 	// MeshInstance stress;
 	// stress.mesh = global_resource_pool.meshes[4];
+	// stress.texture = nullptr;
 	// stress.model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -10.0f)), glm::vec3(5.0f));
 	// stress.color = glm::vec3(1.0f, 1.0f, 1.0f);
 	// glm::mat3 stressNormal = glm::mat3(glm::transpose(glm::inverse(stress.model)));
+
+	// @TEMPORARY: box for texture testing
+	MeshInstance textureBox;
+	textureBox.mesh = global_resource_pool.meshes[3];
+	textureBox.texture = nullptr;
+	textureBox.model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(20.0f, 20.0f, 10.0f)), glm::vec3(5.0f));
+	textureBox.color = glm::vec3(100.0f/255.0f, 65.0f/255.0f, 23.0f/255.0f);
+	glm::mat3 textureBoxNormal = glm::mat3(glm::transpose(glm::inverse(textureBox.model)));
+
+	// loading textures
+	unsigned int texture;
+	glGenTextures(1, &texture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+
+	// set the texture wrapping/filtering options (on the currently bound texture object)
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);	
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	int textureWidth, textureHeight, nrChannels;
+	unsigned char *textureData = stbi_load("resources/texture/awesomeface.png", &textureWidth, &textureHeight, &nrChannels, 0);
+	if (textureData) {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, textureData);
+		glGenerateMipmap(GL_TEXTURE_2D);
+	} else {
+		printf("failed to load texture for awesomeface.png\n");
+	}
+	stbi_image_free(textureData);
+	// end box for texture testing
 	
 	// init vars for fps counter
 	float lastTime;
@@ -752,11 +791,11 @@ int main(int argc, char** argv) {
 		// Handle input
 		processInput(window, deltaTime);
 
-		// Build and upload the view matrix to the shader
+		// Build and upload the view matrix to the shader (depends on camera update)
 		view = glm::lookAt(global_scene.camera.pos, global_scene.camera.pos + global_scene.camera.front, global_scene.camera.up);
 		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
 
-		// Build and upload the projection matrix to the shader
+		// Build and upload the projection matrix to the shader (depends )
 		glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
 		proj = glm::perspective(glm::radians(45.0f), (float)windowWidth / (float)windowHeight, 0.1f, 500.0f);
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(proj));
@@ -790,6 +829,18 @@ int main(int argc, char** argv) {
 		// glUseProgram(shaderProgram);
 		// glDrawElements(GL_TRIANGLES, stress.mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
 		// // End render stress
+
+		// Render texture box
+		glBindVertexArray(textureBox.mesh->VAO);
+		glUniform3fv(modelColorLoc, 1, glm::value_ptr(textureBox.color));
+		textureBox.model = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(20.0f, 20.0f, 10.0f)), glm::vec3(5.0f));
+		textureBox.model = glm::rotate(textureBox.model, (float)(currTime * M_PI * 0.1), glm::vec3(1, sqrt(2), M_PI/3.0f));
+		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(textureBox.model));
+		textureBoxNormal = glm::mat3(glm::transpose(glm::inverse(textureBox.model)));
+		glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(textureBoxNormal));
+		glUniform1i(hasNormalsLoc, textureBox.mesh->has_normals);
+		glUseProgram(shaderProgram);
+		glDrawElements(GL_TRIANGLES, textureBox.mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
 
 		// Loop through the scene, build and upload the model matrix, then draw
 		for (int i = 0; i < global_scene.meshInstanceCount; i++) {
