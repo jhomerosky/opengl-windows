@@ -2,11 +2,14 @@
 in vec3 fragPosition;
 in vec3 fragColor;
 in vec3 fragNormal;
+in vec2 fragTexCoord;
 
 uniform vec3 lightPos;
 uniform vec3 lightColor;
 uniform vec3 viewPos;
 uniform bool hasNormals;
+uniform bool hasTexture;
+uniform sampler2D textureSampler;
 
 out vec4 color;
 void main() {
@@ -34,4 +37,9 @@ void main() {
     }
     // set the final color
     color = vec4((ambient + diffuse + specular) * fragColor, 1.0);
+    
+    if (hasTexture) {
+        vec4 textureColor = texture(textureSampler, fragTexCoord);
+        color = vec4((1-textureColor.a) * color.rgb + textureColor.rgb, color.a);
+    }
 }
