@@ -5,6 +5,7 @@
 
 #define __MAX_MESHES__ 2048
 #define __MAX_MODELS__ 65536
+#define __MAX_TEXTURES__ 65536
 
 // vertex object is a collection of 3d point in space, 3d normal vector, and 2d texture coord
 // more than just a point in space, it is an object that encodes the corner of a polygon
@@ -101,6 +102,9 @@ struct Scene {
 struct ResourcePool {
 	Mesh* meshes[__MAX_MESHES__];
 	int meshCount;
+
+	Texture* textures[__MAX_TEXTURES__];
+	int textureCount;
 	
 	// @TODO: add textures here? Or have 2 resourcePools?
 	// ResourcePool globalMeshPool;
@@ -112,6 +116,10 @@ struct ResourcePool {
 	~ResourcePool() {
 		for (int i = 0; i < meshCount; i++) {
 			free(meshes[i]);
+		}
+
+		for (int i = 0; i < textureCount; i++) {
+			free(textures[i]);
 		}
 	}
 };
