@@ -556,33 +556,13 @@ int main(int argc, char** argv) {
 	// ===== SETUP SCENE =====
 	initGlobalScene();
 
-	// @TODO: load_resources_onto_pools()
+	// @TODO: load_resources_onto_pools();
 	int num_meshes = initGlobalResourcePoolMallocMeshAndMeshFields();
 
-	// init models to scene
-	const int num_models = 2048;
-	MeshInstance* modelpool[num_models];
-	for (int i = 0; i < num_models; i++) {
-		modelpool[i] = (MeshInstance*)malloc(sizeof(MeshInstance));
-		setDefaultMeshInstance(modelpool[i]);
-		addMeshInstanceToGlobalScene(modelpool[i]);
-		modelpool[i]->color = glm::vec3(
-			((float)rand() / (float)RAND_MAX) * 0.66f + 0.33f,
-			((float)rand() / (float)RAND_MAX) * 0.66f + 0.33f,
-			((float)rand() / (float)RAND_MAX) * 0.66f + 0.33f
-		);
-	}
-	printf("num_models=%d\n",num_models);
-
-	// @TEMPORARY: sun object
-	MeshInstance sun;
-	sun.mesh = global_resource_pool.meshes[0];
-	sun.texture = nullptr;
-	sun.model = glm::translate(glm::mat4(1.0f), global_scene.lightSource.pos);
-	sun.color = glm::vec3(1.0f, 1.0f, 1.0f);
-	glm::mat3 sunNormal = glm::mat3(glm::transpose(glm::inverse(sun.model)));
+	// @TODO: load_scene(); // add instances, etc to global scene
 
 	// init vars for fps counter
+	// @TODO: condense this in some way? wrap in a global singleton?
 	float lastTime;
 	float currTime = glfwGetTime();
 	float deltaTime;
@@ -598,13 +578,17 @@ int main(int argc, char** argv) {
     const char* glVersion = (const char*)glGetString(GL_VERSION);
     const char* glRenderer = (const char*)glGetString(GL_RENDERER);
 
-	// vertex shaders defines the vertex positions on the screen
-	// vertex information is interpolated to individual pixel information "fragments"
-	// fragment shaders define transformations on interpolated fragments
-	// these char* need to be freed
+	/////////
+	// what are these 2 types of shaders?
+	// vertex shader: defines transformation on individual vertices (usually position)
+	// fragment: individual pixel information (position, color, etc) linearly interpolated from vertices
+	// fragment shader: defines transformation on individual fragments (usually color)
+	/////////
 	const char* vertexShaderSource = loadShaderSource("src/shaders/basicShader.vs");
 	const char* fragmentShaderSource = loadShaderSource("src/shaders/basicShader.fs");
 	GLuint shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
+	free((void*)vertexShaderSource);
+	free((void*)fragmentShaderSource);
 
 	// get locations to shader uniforms
 	unsigned int modelColorLoc = glGetUniformLocation(shaderProgram, "modelColor");
@@ -642,7 +626,7 @@ int main(int argc, char** argv) {
 		view = glm::lookAt(global_scene.camera.pos, global_scene.camera.pos + global_scene.camera.front, global_scene.camera.up);
 		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
 
-		// Build and upload the projection matrix to the shader (depends )
+		// Build and upload the projection matrix to the shader (depends on fov, aspect ratio, draw distance)
 		glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
 		proj = glm::perspective(glm::radians(45.0f), (float)windowWidth / (float)windowHeight, 0.1f, 500.0f);
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(proj));
@@ -657,9 +641,8 @@ int main(int argc, char** argv) {
 		// Loop through the scene, build and upload the model matrix, then draw
 		for (int i = 0; i < global_scene.meshInstanceCount; i++) {
 			MeshInstance* meshInstance = global_scene.meshInstances[i];
-			if (meshInstance == nullptr) continue;
+			if (meshInstance == nullptr || meshInstance->mesh == nullptr) continue;
 			Mesh* mesh = meshInstance->mesh;
-			if (mesh == nullptr) continue;
 			// Bind the VAO (restores all attribute and buffer settings)
 			glBindVertexArray(mesh->VAO);
 
@@ -669,19 +652,13 @@ int main(int argc, char** argv) {
 			meshInstance->model = glm::translate(meshInstance->model, glm::vec3((i%45)*5.0f, glm::sin(currTime + i), 5.0*(float)(i/45)));
 			meshInstance->model = glm::rotate(meshInstance->model, (float)(currTime * M_PI * speed), glm::vec3(0.0f, 1.0f, 0.0f));
 
-			// upload color vector to the shader
-			glUniform3fv(modelColorLoc, 1, glm::value_ptr(meshInstance->color));
-
-			// normal matrix for normal vectors is defined this way
+			// normal matrix is used in place of the model matrix for the normal vectors
 			normal = glm::mat3(glm::transpose(glm::inverse(meshInstance->model)));
 
-			// upload model matrix to the shader
+			// upload uniforms to the shader
+			glUniform3fv(modelColorLoc, 1, glm::value_ptr(meshInstance->color));
 			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(meshInstance->model));
-
-			// upload normal matrix to the shader
 			glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(normal));
-
-			// upload has_normals flag to sahder
 			glUniform1i(hasNormalsLoc, mesh->has_normals);
 
 			// Issue a draw call
@@ -703,7 +680,7 @@ int main(int argc, char** argv) {
 			fps = FRAMES_TO_COUNT / (fpsWindowTimeEnd - fpsWindowTimeStart);
 		}
  
-		// to execute every ~second
+		// heartbeat implementation (this block runs every ~1 sec)
 		if (heartBeat > 1.0f) {
 			snprintf(title, sizeof(title), "GLFW OpenGL - [FPS: %.2f] - %s - %s", fps, glVersion, glRenderer);
 			glfwSetWindowTitle(window, title);
@@ -711,12 +688,6 @@ int main(int argc, char** argv) {
 		}
 	} // end main render loop
 
-	// cleanup here
-	for (int i = 0; i < num_models; i++) {
-		free(global_scene.meshInstances[i]);
-	}
-	free((void*)vertexShaderSource);
-	free((void*)fragmentShaderSource);
 
     glfwDestroyWindow(window);
     glfwTerminate();
