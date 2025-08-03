@@ -42,7 +42,7 @@ float dot(float u[3], float v[3]) {
 }
 
 // does not check for 0 vector
-void normalize_in_place(float v[3]) {
+void normalize_in_place3f(float v[3]) {
     float norm_factor = 1.0f / sqrtf(dot(v, v));
     v[0] *= norm_factor;
     v[1] *= norm_factor;
