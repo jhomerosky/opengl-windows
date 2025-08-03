@@ -95,6 +95,12 @@ struct Scene {
 	Camera camera;
 	LightSource lightSource;
 	MouseInfo mouse;
+
+	~Scene() {
+		for (int i = 0; i < meshInstanceCount; i++) {
+			free(meshInstances[i]);
+		}
+	}
 };
 
 // ResourcePool is meant to be a store of assets with IDs for MeshInstances to reference
@@ -105,8 +111,12 @@ struct ResourcePool {
 	// @TODO: add textures here? Or have 2 resourcePools?
 	// ResourcePool globalMeshPool;
 	// ResourcePool globalTexturePool;
+	// VS
+	// ResourcePool { Mesh* meshes[]; Texture* textures[]; }
 
-	// @TODO: map string name --> resourceID
+	// @TODO?: map string name --> resourceID
+	// Why should this pool own a map to its resources?
+	// The index is already an ID for the array. 
 	//ResourceMap meshMap;
 
 	~ResourcePool() {
