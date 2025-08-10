@@ -669,7 +669,7 @@ int main(int argc, char** argv) {
 
 		// Build the projection matrix (depends on fov, aspect ratio, draw distance)
 		glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
-		proj = glm::perspective(glm::radians(45.0f), (float)windowWidth / (float)windowHeight, 0.1f, 500.0f);
+		proj = glm::perspective(radiansf(45.0f), (float)windowWidth / (float)windowHeight, 0.1f, 500.0f);
 
 		// Build the view matrix (depends on camera update)
 		glUseProgram(shaderProgram);
