@@ -130,7 +130,7 @@ int compute_and_store_vector_normals(Mesh* mesh) {
 	return 0;
 }
 
-// @Assuming: vertex_normal[i] = vertex[i] for all i
+// @Assuming: vertex_normal[i] goes to vertex[i] for all i
 // @TODO: speed this up. taking 2 seconds to read 125mb file.
 int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
@@ -282,19 +282,23 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	return 1;
 }
 
+// register mesh instance
 int addMeshInstanceToGlobalScene(MeshInstance* meshInstance) { 
-	if (global_scene.meshInstanceCount != __MAX_MODELS__)
-		global_scene.meshInstances[global_scene.meshInstanceCount++] = meshInstance;
+	if (global_scene.meshInstanceCount != __MAX_MODELS__) {
+		global_scene.meshInstances[global_scene.meshInstanceCount] = meshInstance;
+		global_scene.meshInstanceCount++;
+	}
 	return global_scene.meshInstanceCount;
 }
 
+// register mesh
 int addMeshToResourcePool(Mesh* mesh) {
 	if (global_resource_pool.meshCount != __MAX_MESHES__)
 		global_resource_pool.meshes[global_resource_pool.meshCount++] = mesh;
 	return global_resource_pool.meshCount;
 }
 
-// Upload the data to the GPU
+// Upload mesh to the GPU
 void uploadMeshBuffers(const Mesh *mesh) {
 	// Upload vertex data
 	glBindBuffer(GL_ARRAY_BUFFER, mesh->VBO);
@@ -325,6 +329,7 @@ void swapCursorInputMode(GLFWwindow* window) {
 	}
 }
 
+// rotate camera by euler angles
 void rotateCamera(GLFWwindow* window, float yaw, float pitch) {
 	Camera* camera = &(global_scene.camera);
 
@@ -342,6 +347,7 @@ void rotateCamera(GLFWwindow* window, float yaw, float pitch) {
 	normalize_in_place3f(camera->front);
 }
 
+// trigger events based on inputs
 void processInput(GLFWwindow* window, float deltaTime) {
 	Camera *camera = &(global_scene.camera);
     if(glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
@@ -420,18 +426,19 @@ void initOpenGL() {
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // wireframe mode
 }
 
+// default values for camera
 void initCamera(Camera& camera) {
+	camera.pos[0] = 0.0f;
 	camera.pos[1] = 0.0f;
-	camera.pos[2] = 0.0f;
-	camera.pos[3] = 3.0f;
+	camera.pos[2] = 3.0f;
 
+	camera.front[0] =  0.0f;
 	camera.front[1] =  0.0f;
-	camera.front[2] =  0.0f;
-	camera.front[3] = -1.0f;
+	camera.front[2] = -1.0f;
 
-	camera.up[1] = 0.0f;
-	camera.up[2] = 1.0f;
-	camera.up[3] = 0.0f;
+	camera.up[0] = 0.0f;
+	camera.up[1] = 1.0f;
+	camera.up[2] = 0.0f;
 
 	camera.pitch = 0.0f;
 	camera.yaw = -90.0f;
@@ -445,6 +452,7 @@ void initCamera(Camera& camera) {
 	camera.TILT_SPEED = 45.0f;
 }
 
+// default values for light source
 void initLightSource(LightSource& lightSource) {
 	lightSource.pos[0] = 5.0f;
 	lightSource.pos[1] = 50.f;
@@ -455,6 +463,7 @@ void initLightSource(LightSource& lightSource) {
 	lightSource.color[2] = 1.0f;
 }
 
+// default values for MouseInfo (part of global scene)
 void initMouseInfo(MouseInfo& mouse) { 
 	mouse.lastX = 400;
 	mouse.lastY = 300;
@@ -465,6 +474,7 @@ void initMouseInfo(MouseInfo& mouse) {
 	mouse.modeSwitchCooldown = 0.1f;
 }
 
+// builds (no malloc) default mesh including VAO,VBO,EBO objects
 int initMesh(Mesh* mesh) {
 	// init values
 	mesh->vertices = nullptr;
@@ -502,7 +512,7 @@ int initMesh(Mesh* mesh) {
 	return 0;
 }
 
-// hardcodes which mesh to load
+// initializes an initial meshInstance with a hardcoded mesh value
 void setDefaultMeshInstance(MeshInstance* meshInstance) {
 	meshInstance->mesh = global_resource_pool.meshes[0]; // teapot.obj
 	meshInstance->texture = nullptr;
@@ -515,6 +525,13 @@ void setDefaultMeshInstance(MeshInstance* meshInstance) {
 	meshInstance->rotation[1] = 0.0f;
 	meshInstance->rotation[2] = 0.0f;
 	meshInstance->rotation[3] = 0.0f;
+}
+
+// load initial scene
+void loadScene() {
+	MeshInstance* model = (MeshInstance*)malloc(sizeof(MeshInstance));
+	setDefaultMeshInstance(model);
+	addMeshInstanceToGlobalScene(model);
 }
 
 // this should probably be refactored
@@ -587,6 +604,7 @@ int main(int argc, char** argv) {
 	int num_meshes = initGlobalResourcePoolMallocMeshAndMeshFields();
 
 	// @TODO: load_scene(); // add instances, etc to global scene
+	loadScene();
 
 	// init vars for fps counter
 	// @TODO: condense this in some way? wrap in a global singleton?
@@ -688,6 +706,7 @@ int main(int argc, char** argv) {
 			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 			glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(normal));
 			glUniform1i(hasNormalsLoc, mesh->has_normals);
+			glUniform1i(hasTextureLoc, 0);
 
 			// Issue a draw call
 			glUseProgram(shaderProgram);
