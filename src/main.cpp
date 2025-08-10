@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <omp.h>
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
@@ -56,11 +57,10 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 		camera->pitch = -89.0f;
 
 	float direction[3];
-	direction[0] = cos(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
-	direction[1] = sin(radiansf(camera->pitch));
-	direction[2] = sin(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
-	normalize_in_place3f(direction);
-	camera->front = glm::vec3(direction[0], direction[1], direction[2]);
+	camera->front[0] = cos(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
+	camera->front[1] = sin(radiansf(camera->pitch));
+	camera->front[2] = sin(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
+	normalize_in_place3f(camera->front);
 }
 // ===== END CALLBACK FUNCTIONS =====
 
@@ -336,12 +336,10 @@ void rotateCamera(GLFWwindow* window, float yaw, float pitch) {
 	else if (camera->pitch < -89.0f)
 		camera->pitch = -89.0f;
 
-	float direction[3];
-	direction[0] = cos(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
-	direction[1] = sin(radiansf(camera->pitch));
-	direction[2] = sin(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
-	normalize_in_place3f(direction);
-	camera->front = glm::vec3(direction[0], direction[1], direction[2]);
+	camera->front[0] = cos(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
+	camera->front[1] = sin(radiansf(camera->pitch));
+	camera->front[2] = sin(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
+	normalize_in_place3f(camera->front);
 }
 
 void processInput(GLFWwindow* window, float deltaTime) {
@@ -349,23 +347,39 @@ void processInput(GLFWwindow* window, float deltaTime) {
     if(glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 
-	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-		camera->pos += camera->front * camera->speed * deltaTime;
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+		float factor = camera->speed * deltaTime;
+		for (int i = 0; i < 3; i++)camera->pos[i] += camera->front[i] * factor;
+	}
 
-	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-		camera->pos += glm::normalize(glm::cross(camera->up, camera->front)) * camera->speed * deltaTime;
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+		float right[3];
+		cross3f_to_vec3(camera->up, camera->front, right);
+		normalize_in_place3f(right);
+		float factor = camera->speed * deltaTime;
+		for (int i = 0; i < 3; i++) camera->pos[i] += right[i] * factor;
+	}
 
-	if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
-		camera->pos += glm::vec3(0.0f, 1.0f, 0.0f) * camera->speed * deltaTime;
+	if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+		camera->pos[1] += camera->speed * deltaTime;
+	}
 
-	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-		camera->pos -= camera->front * camera->speed * deltaTime;
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+		float factor = camera->speed * deltaTime;
+		for (int i = 0; i < 3; i++) camera->pos[i] -= camera->front[i] * factor;
+	}
 
-	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-		camera->pos -= glm::normalize(glm::cross(camera->up, camera->front)) * camera->speed * deltaTime;
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+		float right[3];
+		cross3f_to_vec3(camera->up, camera->front, right);
+		normalize_in_place3f(right);
+		float factor = camera->speed * deltaTime;
+		for (int i = 0; i < 3; i++) camera->pos[i] -= right[i] * factor;
+	}
 		
-	if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
-		camera->pos -= glm::vec3(0.0f, 1.0f, 0.0f) * camera->speed * deltaTime;
+	if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
+		camera->pos[1] -= camera->speed * deltaTime;
+	}
 
 	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS)
 		swapCursorInputMode(window);
@@ -407,9 +421,17 @@ void initOpenGL() {
 }
 
 void initCamera(Camera& camera) {
-	camera.pos   = glm::vec3(0.0f, 0.0f,  3.0f);
-	camera.front = glm::vec3(0.0f, 0.0f, -1.0f);
-	camera.up    = glm::vec3(0.0f, 1.0f,  0.0f);
+	camera.pos[1] = 0.0f;
+	camera.pos[2] = 0.0f;
+	camera.pos[3] = 3.0f;
+
+	camera.front[1] =  0.0f;
+	camera.front[2] =  0.0f;
+	camera.front[3] = -1.0f;
+
+	camera.up[1] = 0.0f;
+	camera.up[2] = 1.0f;
+	camera.up[3] = 0.0f;
 
 	camera.pitch = 0.0f;
 	camera.yaw = -90.0f;
@@ -424,8 +446,13 @@ void initCamera(Camera& camera) {
 }
 
 void initLightSource(LightSource& lightSource) {
-	lightSource.pos = glm::vec3(5.0f, 50.0f, 15.0f);
-	lightSource.color = glm::vec3(1.0f, 1.0f, 1.0f);
+	lightSource.pos[0] = 5.0f;
+	lightSource.pos[1] = 50.f;
+	lightSource.pos[2] = 15.0f;
+
+	lightSource.color[0] = 1.0f;
+	lightSource.color[1] = 1.0f;
+	lightSource.color[2] = 1.0f;
 }
 
 void initMouseInfo(MouseInfo& mouse) { 
@@ -479,8 +506,15 @@ int initMesh(Mesh* mesh) {
 void setDefaultMeshInstance(MeshInstance* meshInstance) {
 	meshInstance->mesh = global_resource_pool.meshes[0]; // teapot.obj
 	meshInstance->texture = nullptr;
-	meshInstance->model = glm::mat4(1.0f);
-	meshInstance->color = glm::vec3(1.0f, 1.0f, 1.0f);
+	for (int i = 0; i < 3; i++) {
+		meshInstance->pos[i] = 0.0f;
+		meshInstance->color[i] = 1.0f;
+		meshInstance->scale[i] = 1.0f;
+	}
+	meshInstance->rotation[0] = 1.0f;
+	meshInstance->rotation[1] = 0.0f;
+	meshInstance->rotation[2] = 0.0f;
+	meshInstance->rotation[3] = 0.0f;
 }
 
 // this should probably be refactored
@@ -491,11 +525,11 @@ void setDefaultMeshInstance(MeshInstance* meshInstance) {
 //     4. upload mesh data to GPU buffers
 // return total count of meshes in resource pool
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
-	int num_meshes = 5; // @ THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
+	int num_meshes = 1; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
-		"resources/mesh/teapot.obj",
+		"resources/mesh/teapot.obj", // ending here
 		"resources/mesh/teapot2.obj",
-		"resources/mesh/guy.obj", // ending here
+		"resources/mesh/guy.obj", 
 		"resources/mesh/elf.obj",
 		"resources/large_files/HP_Portrait.obj",
 		"resources/large_files/kayle.obj"
@@ -507,7 +541,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		tic();
 		malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh);
 		printf("  TIME LOAD %s: %.6f ms\n", list_of_meshes[i], toc());
-		// if we couldn't load normnals from file, then compute them now
+		// if we couldn't load normals from file, then compute them now
 		// @TODO: write normals back to file?
 		if (!mesh->has_normals) {
 			printf("  Normals not found. Computing normals and rebuilding mesh.\n");
@@ -534,23 +568,16 @@ int main(int argc, char** argv) {
 	srand(getSeed());
 
 	// ===== OPENGL SETUP =====
-	if (!glfwInit()) { fprintf(stderr, "Failed to initialize GLFW\n"); return -1; }
-
-	// initialize window
+	// initialize glfw, glad, OpenGL
+	if (!glfwInit()) { fprintf(stderr, "Failed to initialize GLFW\n"); return -1; } // glfw
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3); // OpenGL 3.x
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3); // OpenGL 3.3
-    GLFWwindow* window = glfwCreateWindow(800, 600, "GLFW OpenGL", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(800, 600, "GLFW OpenGL", NULL, NULL); // window
     if (!window) { fprintf(stderr, "Failed to create GLFW window\n"); glfwTerminate(); return -1; }
 	glfwMakeContextCurrent(window); // point opengl to this window
-    
-	// initialize glad
 	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) { fprintf(stderr, "Failed to initialize GLAD\n"); return -1; }
-
-	// set function to call when window size changes
-	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-
-	// custom function to set OpenGL state
-	initOpenGL();
+	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback); // call this when window is resized
+	initOpenGL(); // custom init OpenGL state
 	// ==== END OPENGL SETUP =====
 
 	// ===== SETUP SCENE =====
@@ -573,17 +600,15 @@ int main(int argc, char** argv) {
 	int FRAMES_TO_COUNT = 60;
 	float fps;
 	char title[256];
-	
-	// get some info
-    const char* glVersion = (const char*)glGetString(GL_VERSION);
-    const char* glRenderer = (const char*)glGetString(GL_RENDERER);
+    const char* glVersion = (const char*)glGetString(GL_VERSION); // driver info
+    const char* glRenderer = (const char*)glGetString(GL_RENDERER); // gpu info
 
-	/////////
-	// what are these 2 types of shaders?
+	//////////////////////////////////////////////
+	// what are SHADERS? two types we can control:
 	// vertex shader: defines transformation on individual vertices (usually position)
 	// fragment: individual pixel information (position, color, etc) linearly interpolated from vertices
 	// fragment shader: defines transformation on individual fragments (usually color)
-	/////////
+	//////////////////////////////////////////////
 	const char* vertexShaderSource = loadShaderSource("src/shaders/basicShader.vs");
 	const char* fragmentShaderSource = loadShaderSource("src/shaders/basicShader.fs");
 	GLuint shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
@@ -603,9 +628,10 @@ int main(int argc, char** argv) {
 	unsigned int projLoc = glGetUniformLocation(shaderProgram, "proj");
 
 	// model, view, proj matrices
+	glm::mat4 model;
 	glm::mat4 view;
 	glm::mat4 proj;
-	glm::mat3 normal; // for normal vertices
+	glm::mat3 normal; // normal matrix instead of model matrix for normal vectors to keep the transformation linear
 
 	int windowWidth, windowHeight;
 	while (!glfwWindowShouldClose(window)) {
@@ -621,22 +647,25 @@ int main(int argc, char** argv) {
 		// Clear the screen buffer
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		// Build and upload the view matrix to the shader (depends on camera update)
-		glUseProgram(shaderProgram);
-		view = glm::lookAt(global_scene.camera.pos, global_scene.camera.pos + global_scene.camera.front, global_scene.camera.up);
-		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-
-		// Build and upload the projection matrix to the shader (depends on fov, aspect ratio, draw distance)
+		// Build the projection matrix (depends on fov, aspect ratio, draw distance)
 		glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
 		proj = glm::perspective(glm::radians(45.0f), (float)windowWidth / (float)windowHeight, 0.1f, 500.0f);
+
+		// Build the view matrix (depends on camera update)
+		glUseProgram(shaderProgram);
+		glm::vec3 camera_pos = glm::vec3(global_scene.camera.pos[0], global_scene.camera.pos[1], global_scene.camera.pos[2]);
+		view = glm::lookAt(
+			camera_pos, 
+			camera_pos + glm::vec3(global_scene.camera.front[0], global_scene.camera.front[1], global_scene.camera.front[2]), 
+			glm::vec3(global_scene.camera.up[0], global_scene.camera.up[1], global_scene.camera.up[2])
+		);
+		
+		// upload uniforms to shader
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(proj));
-
-		// send light source to shader
-		glUniform3fv(lightPosLoc, 1, glm::value_ptr(global_scene.lightSource.pos));
-		glUniform3fv(lightColorLoc, 1, glm::value_ptr(global_scene.lightSource.color));
-
-		// send camera position to shader
-		glUniform3fv(viewPos, 1, glm::value_ptr(global_scene.camera.pos));
+		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+		glUniform3fv(lightPosLoc, 1, global_scene.lightSource.pos);
+		glUniform3fv(lightColorLoc, 1, global_scene.lightSource.color);
+		glUniform3fv(viewPos, 1, global_scene.camera.pos);
 
 		// Loop through the scene, build and upload the model matrix, then draw
 		for (int i = 0; i < global_scene.meshInstanceCount; i++) {
@@ -646,18 +675,17 @@ int main(int argc, char** argv) {
 			// Bind the VAO (restores all attribute and buffer settings)
 			glBindVertexArray(mesh->VAO);
 
-			// Update model matrix
-			float speed = glm::abs(glm::sin(0.2*i));
-			meshInstance->model = glm::mat4(1.0f);
-			meshInstance->model = glm::translate(meshInstance->model, glm::vec3((i%45)*5.0f, glm::sin(currTime + i), 5.0*(float)(i/45)));
-			meshInstance->model = glm::rotate(meshInstance->model, (float)(currTime * M_PI * speed), glm::vec3(0.0f, 1.0f, 0.0f));
-
-			// normal matrix is used in place of the model matrix for the normal vectors
-			normal = glm::mat3(glm::transpose(glm::inverse(meshInstance->model)));
+			// Build model and normal matrix
+			model = glm::mat4(1.0f);
+			glm::mat4 translate = glm::translate(glm::mat4(1.0f), glm::vec3(meshInstance->pos[0], meshInstance->pos[1], meshInstance->pos[2]));
+			glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(meshInstance->scale[0], meshInstance->scale[1], meshInstance->scale[2]));
+			glm::mat4 rotate = glm::mat4_cast(glm::quat(meshInstance->rotation[0], meshInstance->rotation[1], meshInstance->rotation[2], meshInstance->rotation[3]));
+			model = translate * rotate * scale;
+			normal = glm::mat3(glm::transpose(glm::inverse(model)));
 
 			// upload uniforms to the shader
-			glUniform3fv(modelColorLoc, 1, glm::value_ptr(meshInstance->color));
-			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(meshInstance->model));
+			glUniform3fv(modelColorLoc, 1, meshInstance->color);
+			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 			glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(normal));
 			glUniform1i(hasNormalsLoc, mesh->has_normals);
 
