@@ -1,8 +1,3 @@
-#include <glad/glad.h>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
 #define __MAX_MESHES__ 2048
 #define __MAX_MODELS__ 65536
 #define __MAX_TEXTURES__ 65536
@@ -31,33 +26,34 @@ struct Mesh {
 
 	bool has_normals;
 
-	GLuint VAO;
-	GLuint VBO;
-	GLuint EBO;
+	unsigned int VAO;
+	unsigned int VBO;
+	unsigned int EBO;
 
 	~Mesh() { free(vertices); free(faces); }
 };
 
 // Texture is a resource containing metadata
 struct Texture {
-	GLuint textureID;
+	unsigned int textureID;
 };
 
 // MeshInstance is a world model which references a mesh and a texture
-// TODO: store world data here and compute model on the fly
 struct MeshInstance {
 	Mesh* mesh;
 	Texture* texture;
-	glm::mat4 model;
-	glm::vec3 color;
+	float pos[3];
+	float scale[3];
+	float rotation[4]; // orientation as a quaternion rotation on (1, 0, 0, 0)
+	float color[3];
 };
 
 // Camera encodes the view
 // yaw should be initialized to -90.0f
 struct Camera {
-	glm::vec3 pos;
-	glm::vec3 front;
-	glm::vec3 up;
+	float pos[3];
+	float front[3];
+	float up[3];
 
 	float pitch;
 	float yaw;
@@ -84,8 +80,8 @@ struct MouseInfo {
 
 // lightsource is an emitter of light for dynamic lighting
 struct LightSource {
-	glm::vec3 pos;
-	glm::vec3 color;
+	float pos[3];
+	float color[3];
 };
 
 // Scene is meant to be a global scope singleton containing world state
@@ -96,6 +92,12 @@ struct Scene {
 	Camera camera;
 	LightSource lightSource;
 	MouseInfo mouse;
+
+	~Scene() {
+		for (int i = 0; i < meshInstanceCount; i++) {
+			free(meshInstances[i]);
+		}
+	}
 };
 
 // ResourcePool is meant to be a store of assets with IDs for MeshInstances to reference
@@ -109,8 +111,12 @@ struct ResourcePool {
 	// @TODO: add textures here? Or have 2 resourcePools?
 	// ResourcePool globalMeshPool;
 	// ResourcePool globalTexturePool;
+	// VS
+	// ResourcePool { Mesh* meshes[]; Texture* textures[]; }
 
-	// @TODO: map string name --> resourceID
+	// @TODO?: map string name --> resourceID
+	// Why should this pool own a map to its resources?
+	// The index is already an ID for the array. 
 	//ResourceMap meshMap;
 
 	~ResourcePool() {
