@@ -542,6 +542,8 @@ void loadScene() {
 //     4. upload mesh data to GPU buffers
 // return total count of meshes in resource pool
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
+	global_resource_pool.meshCount = 0;
+	global_resource_pool.textureCount = 0;
 	int num_meshes = 1; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
 		"resources/mesh/teapot.obj", // ending here
