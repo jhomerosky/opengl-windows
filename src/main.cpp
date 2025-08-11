@@ -64,9 +64,17 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 }
 // ===== END CALLBACK FUNCTIONS =====
 
+// @TODO: complete
+int compute_vector_normals_onto_mesh_smooth(Mesh* mesh) {
+	for (int i = 0; i < mesh->num_faces; i++) {
+		//
+	}
+	return 0;
+}
+
 // @Assuming: CCW face orientation, faces are triangles
-// @Mutates the mesh vertex list
-int compute_and_store_vector_normals(Mesh* mesh) {
+// @Mutates the size of the mesh
+int compute_vector_normals_onto_mesh_flat(Mesh* mesh) {
 	// for each face:
 	// e1 = v2 - v1, e2 = v3 - v2
 	// fnormal = normalize(cross(e1, e2))
@@ -153,7 +161,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	float pos[3];
 	unsigned int v[4], t[4], n[4];
 
-
+	// counts items in file
 	char buf[512];
 	FILE* file = fopen(filename, "r");
 	while (fgets(buf, 2048, file) != NULL) {
@@ -185,6 +193,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	mesh->vertices = (Vertex*)malloc(sizeof(Vertex)*num_vertices);
 	mesh->faces = (Face*)malloc(sizeof(Face)*num_faces);
 	
+	// load items onto memory
 	while (fgets(buf, 512, file) != NULL) {
 		if (buf[0] == 'v' && buf[1] == ' ') {
 			if (sscanf(buf, "v %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
@@ -314,18 +323,17 @@ void uploadMeshBuffers(const Mesh *mesh) {
 // GLFW_CURSOR_NORMAL - normal cursor
 void swapCursorInputMode(GLFWwindow* window) {
 	MouseInfo *mouse = &(global_scene.mouse);
-	float now = glfwGetTime();
-	if (now - mouse->lastModeSwitchTime < mouse->modeSwitchCooldown) return;
+	if (!mouse->canModeSwitch) return;
 
 	if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED) {
 		glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 		glfwSetCursorPosCallback(window, NULL);
-		mouse->lastModeSwitchTime = now;
+		mouse->canModeSwitch = false;
 		mouse->firstMouse = true;
 	} else {
 		glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 		glfwSetCursorPosCallback(window, mouse_callback);
-		mouse->lastModeSwitchTime = now;
+		mouse->canModeSwitch = false;
 	}
 }
 
@@ -350,6 +358,7 @@ void rotateCamera(GLFWwindow* window, float yaw, float pitch) {
 // trigger events based on inputs
 void processInput(GLFWwindow* window, float deltaTime) {
 	Camera *camera = &(global_scene.camera);
+	MouseInfo *mouse = &(global_scene.mouse);
     if(glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 
@@ -387,8 +396,13 @@ void processInput(GLFWwindow* window, float deltaTime) {
 		camera->pos[1] -= camera->speed * deltaTime;
 	}
 
-	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS)
+	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_RELEASE) {
+		mouse->canModeSwitch = true;
+	}
+
+	if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS) {
 		swapCursorInputMode(window);
+	}
 
 	if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
 		camera->speed = camera->TOP_MOVE_SPEED;
@@ -454,9 +468,9 @@ void initCamera(Camera& camera) {
 
 // default values for light source
 void initLightSource(LightSource& lightSource) {
-	lightSource.pos[0] = 5.0f;
-	lightSource.pos[1] = 50.f;
-	lightSource.pos[2] = 15.0f;
+	lightSource.pos[0] = 0.0f;
+	lightSource.pos[1] = 0.0f;
+	lightSource.pos[2] = 0.0f;
 
 	lightSource.color[0] = 1.0f;
 	lightSource.color[1] = 1.0f;
@@ -469,9 +483,7 @@ void initMouseInfo(MouseInfo& mouse) {
 	mouse.lastY = 300;
 	mouse.sensitivity = 0.1f;
 	mouse.firstMouse = true;
-
-	mouse.lastModeSwitchTime = 0.0f;
-	mouse.modeSwitchCooldown = 0.1f;
+	mouse.canModeSwitch = true;
 }
 
 // builds (no malloc) default mesh including VAO,VBO,EBO objects
@@ -532,6 +544,11 @@ void loadScene() {
 	MeshInstance* model = (MeshInstance*)malloc(sizeof(MeshInstance));
 	setDefaultMeshInstance(model);
 	addMeshInstanceToGlobalScene(model);
+
+	// light source
+	global_scene.lightSource.pos[0] = 5.0f;
+	global_scene.lightSource.pos[1] = 50.f;
+	global_scene.lightSource.pos[2] = 15.0f;
 }
 
 // this should probably be refactored
@@ -544,9 +561,10 @@ void loadScene() {
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	global_resource_pool.meshCount = 0;
 	global_resource_pool.textureCount = 0;
-	int num_meshes = 1; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
+	int num_meshes = 2; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
-		"resources/mesh/teapot.obj", // ending here
+		"resources/mesh/teapot.obj", 
+		"resources/mesh/box.obj", // ending here
 		"resources/mesh/teapot2.obj",
 		"resources/mesh/guy.obj", 
 		"resources/mesh/elf.obj",
@@ -565,7 +583,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		if (!mesh->has_normals) {
 			printf("  Normals not found. Computing normals and rebuilding mesh.\n");
 			tic();
-			compute_and_store_vector_normals(mesh);
+			compute_vector_normals_onto_mesh_flat(mesh);
 			printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", list_of_meshes[i], toc());
 		}
 		printf("  v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
@@ -601,11 +619,8 @@ int main(int argc, char** argv) {
 
 	// ===== SETUP SCENE =====
 	initGlobalScene();
-
 	// @TODO: load_resources_onto_pools();
-	int num_meshes = initGlobalResourcePoolMallocMeshAndMeshFields();
-
-	// @TODO: load_scene(); // add instances, etc to global scene
+	initGlobalResourcePoolMallocMeshAndMeshFields();
 	loadScene();
 
 	// init vars for fps counter

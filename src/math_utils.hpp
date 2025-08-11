@@ -7,7 +7,7 @@ float randf();
 static inline float radiansf(float degrees);
 int isNumber(const char *str);
 float maxf(float a, float b);
-float dot(float u[3], float v[3]);
+static inline float dot(float u[3], float v[3]);
 void quat_mult(float p[4], float q[4]);
 void cross3f_to_vec3(float v1[3], float v2[3], float res[3]);
 void normalize_in_place3f(float v[3]);
@@ -20,7 +20,7 @@ unsigned int getSeed() {
 	return seed;
 }
 
-// clamp random between 
+// random in (-1, 1)
 float randf() { 
 	return (float)2 * (rand() - RAND_MAX/2) / RAND_MAX;
  }
@@ -38,7 +38,7 @@ void cross3f_to_vec3(float v1[3], float v2[3], float res[3]) {
     res[2] = v1[0] * v2[1] - v1[1] * v2[0];
 }
 
-float dot(float u[3], float v[3]) {
+static inline float dot(float u[3], float v[3]) {
 	return u[0]*v[0] + u[1]*v[1] + u[2]*v[2];
 }
 

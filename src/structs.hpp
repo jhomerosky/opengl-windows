@@ -73,9 +73,7 @@ struct MouseInfo {
 	float lastY;
 	float sensitivity;
 	bool firstMouse;
-
-	float lastModeSwitchTime;
-	float modeSwitchCooldown;
+	bool canModeSwitch;
 };
 
 // lightsource is an emitter of light for dynamic lighting
