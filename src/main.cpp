@@ -65,15 +65,18 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 // ===== END CALLBACK FUNCTIONS =====
 
 // @TODO: complete
+// for now, assume vertex count is unique based on position; @TODO: collapse into uniques
 int compute_vector_normals_onto_mesh_smooth(Mesh* mesh) {
+	// hashing stragegy: hash = x * prime1 ^ y * prime2 ^ z * prime3
+	// (x,y,z) = (int)((x,y,z) * 1e5)
 	for (int i = 0; i < mesh->num_faces; i++) {
-		//
+			100.12345 * 1e5 = 10012345
 	}
 	return 0;
 }
 
 // @Assuming: CCW face orientation, faces are triangles
-// @Mutates the size of the mesh
+// @Mutates the size of the mesh to 3*(num_faces)
 int compute_vector_normals_onto_mesh_flat(Mesh* mesh) {
 	// for each face:
 	// e1 = v2 - v1, e2 = v3 - v2
