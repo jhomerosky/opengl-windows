@@ -64,14 +64,51 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 }
 // ===== END CALLBACK FUNCTIONS =====
 
+
+
+// hashing stragegy: hash = x * prime1 ^ y * prime2 ^ z * prime3
+// (x,y,z) = (int)((x,y,z) * 1e5)
+static inline unsigned int vertexHash(Vertex* vertex) {
+	const int decimalFilter = 1e5;
+	const int primes[3] = {19349669, 83492791, 73856093};
+	const int vecints[3] = {
+		(int)(vertex->pos[0] * decimalFilter),
+		(int)(vertex->pos[1] * decimalFilter),
+		(int)(vertex->pos[2] * decimalFilter)
+	};
+	return (primes[0] * vecints[0]) ^ (primes[1] * vecints[1]) ^ (primes[2] * vecints[2]);
+}
+
 // @TODO: complete
 // for now, assume vertex count is unique based on position; @TODO: collapse into uniques
 int compute_vector_normals_onto_mesh_smooth(Mesh* mesh) {
-	// hashing stragegy: hash = x * prime1 ^ y * prime2 ^ z * prime3
-	// (x,y,z) = (int)((x,y,z) * 1e5)
-	for (int i = 0; i < mesh->num_faces; i++) {
-			100.12345 * 1e5 = 10012345
+
+	struct HashNode {
+		unsigned int key;
+		unsigned int data; // map vertex.pos -> index in the new vertex array
+		HashNode* next;
+	};
+	HashNode* map = (HashNode*)malloc(mesh->num_faces * sizeof(HashNode));
+
+	// for now we write hash to file
+	FILE *hashFile = fopen("vertex_hashes.txt", "w");
+	if (!hashFile) {
+		fprintf(stderr, "Failed to open vertex_hashes.txt for writing\n");
+		free(map);
+		return -1;
 	}
+	for (int i = 0; i < mesh->num_faces; i++) {
+		Face* temp = &(mesh->faces[i]);
+		for (int j = 0; j < 3; j++) {
+			Vertex* v = &(mesh->vertices[temp->vertexId[j]]);
+			unsigned int hash = vertexHash(v) % mesh->num_faces;
+			fprintf(hashFile, "face[%d]: %f %f %f %u\n", i, v->pos[0], v->pos[1], v->pos[2], hash);
+		}	
+		//map_insert()
+	}
+
+	fprintf(hashFile, "done\n");
+	free(map);
 	return 0;
 }
 
@@ -439,7 +476,7 @@ void initOpenGL() {
 	glEnable(GL_DEPTH_TEST);  
 
 
-	glfwSwapInterval(0); // disable vsync
+	glfwSwapInterval(1); // disable vsync
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // wireframe mode
 }
 
@@ -564,7 +601,7 @@ void loadScene() {
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	global_resource_pool.meshCount = 0;
 	global_resource_pool.textureCount = 0;
-	int num_meshes = 2; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
+	int num_meshes = 1; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
 		"resources/mesh/teapot.obj", 
 		"resources/mesh/box.obj", // ending here
@@ -583,10 +620,11 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		printf("  TIME LOAD %s: %.6f ms\n", list_of_meshes[i], toc());
 		// if we couldn't load normals from file, then compute them now
 		// @TODO: write normals back to file?
-		if (!mesh->has_normals) {
+		if (1 || !mesh->has_normals) {
 			printf("  Normals not found. Computing normals and rebuilding mesh.\n");
 			tic();
-			compute_vector_normals_onto_mesh_flat(mesh);
+			//compute_vector_normals_onto_mesh_flat(mesh);
+			compute_vector_normals_onto_mesh_smooth(mesh);
 			printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", list_of_meshes[i], toc());
 		}
 		printf("  v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
