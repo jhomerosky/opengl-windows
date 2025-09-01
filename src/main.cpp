@@ -79,16 +79,24 @@ static inline unsigned int vertexHash(Vertex* vertex) {
 	return (primes[0] * vecints[0]) ^ (primes[1] * vecints[1]) ^ (primes[2] * vecints[2]);
 }
 
+static inline bool equals3f(float v1[3], float v2[3], float eps) {
+	return (
+		abs(v1[0] - v2[0]) < eps &&
+		abs(v1[1] - v2[1]) < eps &&
+		abs(v1[2] - v2[2]) < eps
+	);
+}
+
 // @TODO: complete
 // for now, assume vertex count is unique based on position; @TODO: collapse into uniques
 int compute_vector_normals_onto_mesh_smooth(Mesh* mesh) {
 
 	struct HashNode {
-		unsigned int key;
+		float key[3];
 		unsigned int data; // map vertex.pos -> index in the new vertex array
 		HashNode* next;
 	};
-	HashNode* map = (HashNode*)malloc(mesh->num_faces * sizeof(HashNode));
+	HashNode** map = (HashNode**)malloc(mesh->num_faces * sizeof(HashNode*));
 
 	// for now we write hash to file
 	FILE *hashFile = fopen("vertex_hashes.txt", "w");
@@ -102,12 +110,43 @@ int compute_vector_normals_onto_mesh_smooth(Mesh* mesh) {
 		for (int j = 0; j < 3; j++) {
 			Vertex* v = &(mesh->vertices[temp->vertexId[j]]);
 			unsigned int hash = vertexHash(v) % mesh->num_faces;
-			fprintf(hashFile, "face[%d]: %f %f %f %u\n", i, v->pos[0], v->pos[1], v->pos[2], hash);
-		}	
-		//map_insert()
+			fprintf(hashFile, "face[%d]: %f %f %f [%u]\n", i, v->pos[0], v->pos[1], v->pos[2], hash);
+			// insert into map
+			// HashNode* temp = map[hash];
+			// if (temp == NULL) {
+			// 	map[hash] = (HashNode*)calloc(1, sizeof(HashNode));
+			// 	temp = map[hash];
+			// }
+			// float eps = 1e-5;
+			// while (temp->next != NULL && !equals3f(temp->key, v->pos, eps)) {
+			// 	temp = temp->next;
+			// }
+
+
+			// hashmap insert
+			if (map[hash] == NULL) {
+				// no collision
+				map[hash] = (HashNode*)calloc(1, sizeof(HashNode));
+			} else {
+				// handle collision
+				float eps = 1e-5;
+				bool found = false;
+				HashNode* ptr = map[hash];
+				while (ptr->next != NULL) {
+					if (equals3f(ptr->key, v->pos, eps)) {
+						found = true;
+						break;
+					}
+ll					ptr = ptr->next;
+				}
+			}
+		}
 	}
 
 	fprintf(hashFile, "done\n");
+	for (int i = 0; i < mesh->num_faces; i++) {
+		free();
+	}
 	free(map);
 	return 0;
 }
