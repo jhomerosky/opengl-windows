@@ -68,17 +68,17 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 
 // hashing stragegy: hash = x * prime1 ^ y * prime2 ^ z * prime3
 // (x,y,z) = (int)((x,y,z) * 1e5)
-static inline unsigned int vertexHash(Vertex* vertex, const int decimalFilter) {
+static inline unsigned long long vertexHash(Vertex* vertex, const int decimalFilter) {
 
 	// 1.1234567 * 1e5 = 112345.67 --> 112345
 	// 1.1234587 * 1e5 = 112345.87 --> 112345
 	// 1.1234587 - 1.1234567 = 0.0000020 < 0.00001 = 1e-5
-	const int primes[3] = {19349669, 83492791, 73856093};
+	const long long primes[3] = {19349669, 83492791, 73856093};
 	//const int primes[3] = {113, 569, 877};
-	const int vecints[3] = {
-		(int)(vertex->pos[0] * decimalFilter),
-		(int)(vertex->pos[1] * decimalFilter),
-		(int)(vertex->pos[2] * decimalFilter)
+	const long long vecints[3] = {
+		(long long)(vertex->pos[0] * decimalFilter),
+		(long long)(vertex->pos[1] * decimalFilter),
+		(long long)(vertex->pos[2] * decimalFilter)
 	};
 	return (primes[0] * vecints[0]) ^ (primes[1] * vecints[1]) ^ (primes[2] * vecints[2]);
 }
@@ -95,9 +95,7 @@ static inline bool equals3f(const float v1[3], const float v2[3], const float ep
 // @ASSUMING: vertices are deduplicated
 // compute each face's normal vector, add vnormal to each component vector, normalize all vectors
 int compute_vnormal_smooth(Mesh* mesh) {
-	printf("entered empty compute_vnormal_smooth");
-
-	// todo: can we parallelize computing normals and do addition later?
+	// @TODO: can we parallelize computing normals and do addition later?
 	for (int i = 0; i < mesh->num_faces; i++) {
 		float e1[3];
 		float e2[3];
@@ -141,16 +139,17 @@ int compute_vnormal_smooth(Mesh* mesh) {
 }
 
 // deduplicate a mesh's vertex list on position with tolerance of 1e-(tol)
+// @TODO: some vertices are already used by many different faces and this will still check those anyways
+//        which results in a very large number of unnecessary checks. can we eliminate that behavior?
 int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	struct HashNode {
 		unsigned int data; // map vertex.pos -> index in the new vertex array (vertex_list[data].pos is the key to match)
 		HashNode* next;
 	};
 
-	int temp;
-	for (temp = 1; temp < tol; temp*=10) {}
-	const int decimalFilter = temp;
-	const float eps = 1.0/(float)temp;
+	int decimalFilter = 1;
+	for (int i = 0; i < tol; i++) decimalFilter *= 10;
+	const float eps = 1.0/(float)decimalFilter;
 	
 	// allocate memory for map and new vertex list
 	size_t map_size = mesh->num_faces/2;
@@ -159,32 +158,24 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in deduplicate_mesh_vertices\n"); return -1; }
 	unsigned int vertex_index = 0;
 
-	// for now we write hash to file
-	//FILE *hashFile = fopen("vertex_hashes_v2.txt", "w");
-	//if (!hashFile) { fprintf(stderr, "Failed to open vertex_hashes.txt for writing\n"); free(map); return -1; }
-
-	int dupe_count = 0;
-	// loop through faces
 	for (int i = 0; i < mesh->num_faces; i++) {
 		Face* temp = &(mesh->faces[i]);
-		// loop through triangle vertices
 		for (int j = 0; j < 3; j++) {
+			// hash each vertex
 			Vertex* v = &(mesh->vertices[temp->vertexId[j]]);
-			// hash the vertex position
 			unsigned int hash = vertexHash(v, decimalFilter) % map_size;
-			//fprintf(hashFile, "face[%d]: %f %f %f [%u]\n", i, v->pos[0], v->pos[1], v->pos[2], hash); // temporary print to file
-			// hashmap insert
 			HashNode** ptr = &map[hash];
-			float found = false;
+			
 			// check if vertex is already in map
+			bool found = false;
 			while (*ptr != NULL) {
 				if (equals3f(new_vertex_list[(*ptr)->data].pos, v->pos, eps)) {
-					dupe_count++;
 					found = true;
 					break;
 				}
 				ptr = &((*ptr)->next);
 			}
+
 			// if vertex is not found in the map then add it
 			if (!found) {
 				*ptr = (HashNode*)calloc(1, sizeof(HashNode));
@@ -197,25 +188,11 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 		}
 	}
 
+	int dupe_count = mesh->num_vertices - vertex_index;
 	printf("duplicates dropped = %d\n", dupe_count);
-	//fprintf(hashFile, "done | duplicates dropped = %d\n", dupe_count);
 
-	// print the map for debugging
+	// free the map's contents
 	for (int i = 0; i < map_size; i++) {
-		// free map linked list
-		HashNode* ptr = map[i];
-		//fprintf(hashFile, "map[%d]=", i);
-		while (ptr != NULL) {
-			//fprintf(hashFile, "%d ", ptr->data);
-			ptr = ptr->next;
-		}
-		//fprintf(hashFile, "\n");
-	}
-	//fprintf(hashFile, "done printing map\n");
-
-	// free the map
-	for (int i = 0; i < map_size; i++) {
-		// free map linked list
 		HashNode* ptr = map[i];
 		HashNode* temp;
 		while (ptr != NULL) {
@@ -226,10 +203,8 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	}
 	free(map);
 	free(mesh->vertices);
-	new_vertex_list = (Vertex*)realloc(new_vertex_list, vertex_index*sizeof(Vertex));
-	mesh->vertices = new_vertex_list;
+	mesh->vertices = (Vertex*)realloc(new_vertex_list, vertex_index*sizeof(Vertex));
 	mesh->num_vertices = vertex_index;
-	mesh->has_normals = false; // change this when fixed
 
 	return 0;
 }
@@ -730,12 +705,12 @@ void loadScene() {
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	global_resource_pool.meshCount = 0;
 	global_resource_pool.textureCount = 0;
-	int num_meshes = 4; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
+	int num_meshes = 1; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
-		"resources/mesh/teapot.obj",
+		"resources/mesh/teapot.obj", // ending here
 		"resources/mesh/box.obj", 
 		"resources/mesh/teapot2.obj",
-		"resources/mesh/guy.obj", // ending here
+		"resources/mesh/guy.obj", 
 		"resources/mesh/elf.obj", 
 		"resources/large_files/HP_Portrait.obj", 
 		"resources/large_files/kayle.obj"  
@@ -749,12 +724,14 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		printf("  TIME LOAD %s: %.6f ms\n", list_of_meshes[i], toc());
 		// if we couldn't load normals from file, then compute them now
 		// @TODO: write normals back to file?
-		if (!mesh->has_normals) {
+		if (1 || !mesh->has_normals) {
 			printf("  Normals not found. Computing normals and rebuilding mesh.\n");
-			tic();
 			//compute_vnormal_flat(mesh);
 			const int tol = 5;
-			//deduplicate_mesh_vertices(mesh, tol);
+			tic();
+			deduplicate_mesh_vertices(mesh, tol);
+			printf("  TIME DEDUPLICATE VERTICES %s: %.6f ms\n", list_of_meshes[i], toc());
+			tic();
 			compute_vnormal_smooth(mesh);
 			printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", list_of_meshes[i], toc());
 		}
