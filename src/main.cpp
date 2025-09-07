@@ -74,6 +74,7 @@ static inline unsigned int vertexHash(Vertex* vertex, const int decimalFilter) {
 	// 1.1234587 * 1e5 = 112345.87 --> 112345
 	// 1.1234587 - 1.1234567 = 0.0000020 < 0.00001 = 1e-5
 	const int primes[3] = {19349669, 83492791, 73856093};
+	//const int primes[3] = {113, 569, 877};
 	const int vecints[3] = {
 		(int)(vertex->pos[0] * decimalFilter),
 		(int)(vertex->pos[1] * decimalFilter),
@@ -159,8 +160,8 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	unsigned int vertex_index = 0;
 
 	// for now we write hash to file
-	FILE *hashFile = fopen("vertex_hashes_v2.txt", "w");
-	if (!hashFile) { fprintf(stderr, "Failed to open vertex_hashes.txt for writing\n"); free(map); return -1; }
+	//FILE *hashFile = fopen("vertex_hashes_v2.txt", "w");
+	//if (!hashFile) { fprintf(stderr, "Failed to open vertex_hashes.txt for writing\n"); free(map); return -1; }
 
 	int dupe_count = 0;
 	// loop through faces
@@ -171,7 +172,7 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 			Vertex* v = &(mesh->vertices[temp->vertexId[j]]);
 			// hash the vertex position
 			unsigned int hash = vertexHash(v, decimalFilter) % map_size;
-			fprintf(hashFile, "face[%d]: %f %f %f [%u]\n", i, v->pos[0], v->pos[1], v->pos[2], hash); // temporary print to file
+			//fprintf(hashFile, "face[%d]: %f %f %f [%u]\n", i, v->pos[0], v->pos[1], v->pos[2], hash); // temporary print to file
 			// hashmap insert
 			HashNode** ptr = &map[hash];
 			float found = false;
@@ -197,20 +198,20 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	}
 
 	printf("duplicates dropped = %d\n", dupe_count);
-	fprintf(hashFile, "done | duplicates dropped = %d\n", dupe_count);
+	//fprintf(hashFile, "done | duplicates dropped = %d\n", dupe_count);
 
 	// print the map for debugging
 	for (int i = 0; i < map_size; i++) {
 		// free map linked list
 		HashNode* ptr = map[i];
-		fprintf(hashFile, "map[%d]=", i);
+		//fprintf(hashFile, "map[%d]=", i);
 		while (ptr != NULL) {
-			fprintf(hashFile, "%d ", ptr->data);
+			//fprintf(hashFile, "%d ", ptr->data);
 			ptr = ptr->next;
 		}
-		fprintf(hashFile, "\n");
+		//fprintf(hashFile, "\n");
 	}
-	fprintf(hashFile, "done printing map\n");
+	//fprintf(hashFile, "done printing map\n");
 
 	// free the map
 	for (int i = 0; i < map_size; i++) {
