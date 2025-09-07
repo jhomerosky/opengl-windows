@@ -68,8 +68,11 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 
 // hashing stragegy: hash = x * prime1 ^ y * prime2 ^ z * prime3
 // (x,y,z) = (int)((x,y,z) * 1e5)
-static inline unsigned int vertexHash(Vertex* vertex) {
-	const int decimalFilter = 1e5;
+static inline unsigned int vertexHash(Vertex* vertex, const int decimalFilter) {
+
+	// 1.1234567 * 1e5 = 112345.67 --> 112345
+	// 1.1234587 * 1e5 = 112345.87 --> 112345
+	// 1.1234587 - 1.1234567 = 0.0000020 < 0.00001 = 1e-5
 	const int primes[3] = {19349669, 83492791, 73856093};
 	const int vecints[3] = {
 		(int)(vertex->pos[0] * decimalFilter),
@@ -79,7 +82,8 @@ static inline unsigned int vertexHash(Vertex* vertex) {
 	return (primes[0] * vecints[0]) ^ (primes[1] * vecints[1]) ^ (primes[2] * vecints[2]);
 }
 
-static inline bool equals3f(float v1[3], float v2[3], float eps) {
+static inline bool equals3f(const float v1[3], const float v2[3], const float eps) {
+	//printf("equals3f(\n%f %f %f\n%f %f %f\n)\n", v1[0], v1[1], v1[2], v2[0], v2[1], v2[2]);
 	return (
 		abs(v1[0] - v2[0]) < eps &&
 		abs(v1[1] - v2[1]) < eps &&
@@ -87,73 +91,152 @@ static inline bool equals3f(float v1[3], float v2[3], float eps) {
 	);
 }
 
-// @TODO: complete
-// for now, assume vertex count is unique based on position; @TODO: collapse into uniques
-int compute_vector_normals_onto_mesh_smooth(Mesh* mesh) {
+// @ASSUMING: vertices are deduplicated
+// compute each face's normal vector, add vnormal to each component vector, normalize all vectors
+int compute_vnormal_smooth(Mesh* mesh) {
+	printf("entered empty compute_vnormal_smooth");
 
+	// todo: can we parallelize computing normals and do addition later?
+	for (int i = 0; i < mesh->num_faces; i++) {
+		float e1[3];
+		float e2[3];
+		float res[3];
+		// vertices
+		const Vertex v0 = mesh->vertices[mesh->faces[i].vertexId[0]];
+		const Vertex v1 = mesh->vertices[mesh->faces[i].vertexId[1]];
+		const Vertex v2 = mesh->vertices[mesh->faces[i].vertexId[2]];
+		// e1
+		e1[0] = v1.pos[0] - v0.pos[0];
+		e1[1] = v1.pos[1] - v0.pos[1];
+		e1[2] = v1.pos[2] - v0.pos[2];
+		// e2
+		e2[0] = v2.pos[0] - v1.pos[0];
+		e2[1] = v2.pos[1] - v1.pos[1];
+		e2[2] = v2.pos[2] - v1.pos[2];
+
+		// cross product will not be near 0 because we are using edges of a triangle
+		cross3f_to_vec3(e1, e2, res);
+
+		// add this face's vnormal to each vertex in the face
+		mesh->vertices[mesh->faces[i].vertexId[0]].normal[0] += res[0];
+		mesh->vertices[mesh->faces[i].vertexId[0]].normal[1] += res[1];
+		mesh->vertices[mesh->faces[i].vertexId[0]].normal[2] += res[2];
+
+		mesh->vertices[mesh->faces[i].vertexId[1]].normal[0] += res[0];
+		mesh->vertices[mesh->faces[i].vertexId[1]].normal[1] += res[1];
+		mesh->vertices[mesh->faces[i].vertexId[1]].normal[2] += res[2];
+
+		mesh->vertices[mesh->faces[i].vertexId[2]].normal[0] += res[0];
+		mesh->vertices[mesh->faces[i].vertexId[2]].normal[1] += res[1];
+		mesh->vertices[mesh->faces[i].vertexId[2]].normal[2] += res[2];
+	}
+	// normalize every vertex's vnormal
+	#pragma omp parallel for
+	for (int i = 0; i < mesh->num_vertices; i++) {
+		normalize_in_place3f(mesh->vertices[i].normal);
+	}
+	mesh->has_normals = true;
+	return 0;
+}
+
+// deduplicate a mesh's vertex list on position with tolerance of 1e-(tol)
+int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	struct HashNode {
-		float key[3];
-		unsigned int data; // map vertex.pos -> index in the new vertex array
+		unsigned int data; // map vertex.pos -> index in the new vertex array (vertex_list[data].pos is the key to match)
 		HashNode* next;
 	};
-	HashNode** map = (HashNode**)malloc(mesh->num_faces * sizeof(HashNode*));
+
+	int temp;
+	for (temp = 1; temp < tol; temp*=10) {}
+	const int decimalFilter = temp;
+	const float eps = 1.0/(float)temp;
+	
+	// allocate memory for map and new vertex list
+	size_t map_size = mesh->num_faces/2;
+	HashNode** map = (HashNode**)calloc(map_size, sizeof(HashNode*));
+	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces); // upper bound size, resize later
+	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in deduplicate_mesh_vertices\n"); return -1; }
+	unsigned int vertex_index = 0;
 
 	// for now we write hash to file
-	FILE *hashFile = fopen("vertex_hashes.txt", "w");
-	if (!hashFile) {
-		fprintf(stderr, "Failed to open vertex_hashes.txt for writing\n");
-		free(map);
-		return -1;
-	}
+	FILE *hashFile = fopen("vertex_hashes_v2.txt", "w");
+	if (!hashFile) { fprintf(stderr, "Failed to open vertex_hashes.txt for writing\n"); free(map); return -1; }
+
+	int dupe_count = 0;
+	// loop through faces
 	for (int i = 0; i < mesh->num_faces; i++) {
 		Face* temp = &(mesh->faces[i]);
+		// loop through triangle vertices
 		for (int j = 0; j < 3; j++) {
 			Vertex* v = &(mesh->vertices[temp->vertexId[j]]);
-			unsigned int hash = vertexHash(v) % mesh->num_faces;
-			fprintf(hashFile, "face[%d]: %f %f %f [%u]\n", i, v->pos[0], v->pos[1], v->pos[2], hash);
-			// insert into map
-			// HashNode* temp = map[hash];
-			// if (temp == NULL) {
-			// 	map[hash] = (HashNode*)calloc(1, sizeof(HashNode));
-			// 	temp = map[hash];
-			// }
-			// float eps = 1e-5;
-			// while (temp->next != NULL && !equals3f(temp->key, v->pos, eps)) {
-			// 	temp = temp->next;
-			// }
-
-
+			// hash the vertex position
+			unsigned int hash = vertexHash(v, decimalFilter) % map_size;
+			fprintf(hashFile, "face[%d]: %f %f %f [%u]\n", i, v->pos[0], v->pos[1], v->pos[2], hash); // temporary print to file
 			// hashmap insert
-			if (map[hash] == NULL) {
-				// no collision
-				map[hash] = (HashNode*)calloc(1, sizeof(HashNode));
-			} else {
-				// handle collision
-				float eps = 1e-5;
-				bool found = false;
-				HashNode* ptr = map[hash];
-				while (ptr->next != NULL) {
-					if (equals3f(ptr->key, v->pos, eps)) {
-						found = true;
-						break;
-					}
-ll					ptr = ptr->next;
+			HashNode** ptr = &map[hash];
+			float found = false;
+			// check if vertex is already in map
+			while (*ptr != NULL) {
+				if (equals3f(new_vertex_list[(*ptr)->data].pos, v->pos, eps)) {
+					dupe_count++;
+					found = true;
+					break;
 				}
+				ptr = &((*ptr)->next);
 			}
+			// if vertex is not found in the map then add it
+			if (!found) {
+				*ptr = (HashNode*)calloc(1, sizeof(HashNode));
+				(*ptr)->data = vertex_index++;
+				new_vertex_list[(*ptr)->data].pos[0] = v->pos[0];
+				new_vertex_list[(*ptr)->data].pos[1] = v->pos[1];
+				new_vertex_list[(*ptr)->data].pos[2] = v->pos[2];
+			}
+			temp->vertexId[j] = (*ptr)->data;
 		}
 	}
 
-	fprintf(hashFile, "done\n");
-	for (int i = 0; i < mesh->num_faces; i++) {
-		free();
+	printf("duplicates dropped = %d\n", dupe_count);
+	fprintf(hashFile, "done | duplicates dropped = %d\n", dupe_count);
+
+	// print the map for debugging
+	for (int i = 0; i < map_size; i++) {
+		// free map linked list
+		HashNode* ptr = map[i];
+		fprintf(hashFile, "map[%d]=", i);
+		while (ptr != NULL) {
+			fprintf(hashFile, "%d ", ptr->data);
+			ptr = ptr->next;
+		}
+		fprintf(hashFile, "\n");
+	}
+	fprintf(hashFile, "done printing map\n");
+
+	// free the map
+	for (int i = 0; i < map_size; i++) {
+		// free map linked list
+		HashNode* ptr = map[i];
+		HashNode* temp;
+		while (ptr != NULL) {
+			temp = ptr->next;
+			free(ptr);
+			ptr = temp;
+		}
 	}
 	free(map);
+	free(mesh->vertices);
+	new_vertex_list = (Vertex*)realloc(new_vertex_list, vertex_index*sizeof(Vertex));
+	mesh->vertices = new_vertex_list;
+	mesh->num_vertices = vertex_index;
+	mesh->has_normals = false; // change this when fixed
+
 	return 0;
 }
 
 // @Assuming: CCW face orientation, faces are triangles
 // @Mutates the size of the mesh to 3*(num_faces)
-int compute_vector_normals_onto_mesh_flat(Mesh* mesh) {
+// @TODO: split into mutating function and vnormal compute function
+int compute_vnormal_flat(Mesh* mesh) {
 	// for each face:
 	// e1 = v2 - v1, e2 = v3 - v2
 	// fnormal = normalize(cross(e1, e2))
@@ -604,8 +687,8 @@ int initMesh(Mesh* mesh) {
 }
 
 // initializes an initial meshInstance with a hardcoded mesh value
-void setDefaultMeshInstance(MeshInstance* meshInstance) {
-	meshInstance->mesh = global_resource_pool.meshes[0]; // teapot.obj
+void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
+	meshInstance->mesh = global_resource_pool.meshes[resourceId];
 	meshInstance->texture = nullptr;
 	for (int i = 0; i < 3; i++) {
 		meshInstance->pos[i] = 0.0f;
@@ -620,9 +703,15 @@ void setDefaultMeshInstance(MeshInstance* meshInstance) {
 
 // load initial scene
 void loadScene() {
-	MeshInstance* model = (MeshInstance*)malloc(sizeof(MeshInstance));
-	setDefaultMeshInstance(model);
-	addMeshInstanceToGlobalScene(model);
+	const float spacing = 5;
+	for (int i = 0; i < global_resource_pool.meshCount; i++) {
+		MeshInstance* model = (MeshInstance*)malloc(sizeof(MeshInstance));
+		setDefaultMeshInstance(model, i);
+		model->pos[0] = i*5;
+		model->pos[1] = 0;
+		model->pos[2] = 0;
+		addMeshInstanceToGlobalScene(model);
+	}
 
 	// light source
 	global_scene.lightSource.pos[0] = 5.0f;
@@ -640,15 +729,15 @@ void loadScene() {
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	global_resource_pool.meshCount = 0;
 	global_resource_pool.textureCount = 0;
-	int num_meshes = 1; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
+	int num_meshes = 4; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
-		"resources/mesh/teapot.obj", 
-		"resources/mesh/box.obj", // ending here
+		"resources/mesh/teapot.obj",
+		"resources/mesh/box.obj", 
 		"resources/mesh/teapot2.obj",
-		"resources/mesh/guy.obj", 
-		"resources/mesh/elf.obj",
-		"resources/large_files/HP_Portrait.obj",
-		"resources/large_files/kayle.obj"
+		"resources/mesh/guy.obj", // ending here
+		"resources/mesh/elf.obj", 
+		"resources/large_files/HP_Portrait.obj", 
+		"resources/large_files/kayle.obj"  
 	};
 	for (int i = 0; i < num_meshes; i++) {
 		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
@@ -659,11 +748,13 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		printf("  TIME LOAD %s: %.6f ms\n", list_of_meshes[i], toc());
 		// if we couldn't load normals from file, then compute them now
 		// @TODO: write normals back to file?
-		if (1 || !mesh->has_normals) {
+		if (!mesh->has_normals) {
 			printf("  Normals not found. Computing normals and rebuilding mesh.\n");
 			tic();
-			//compute_vector_normals_onto_mesh_flat(mesh);
-			compute_vector_normals_onto_mesh_smooth(mesh);
+			//compute_vnormal_flat(mesh);
+			const int tol = 5;
+			//deduplicate_mesh_vertices(mesh, tol);
+			compute_vnormal_smooth(mesh);
 			printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", list_of_meshes[i], toc());
 		}
 		printf("  v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
