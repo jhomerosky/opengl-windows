@@ -1,3 +1,5 @@
+#ifndef __my_structs__
+
 #define __MAX_MESHES__ 2048
 #define __MAX_MODELS__ 65536
 #define __MAX_TEXTURES__ 65536
@@ -36,6 +38,15 @@ struct Mesh {
 // Texture is a resource containing metadata
 struct Texture {
 	unsigned int textureID;
+};
+
+// Skybox is a cubemap loaded from 6 individual texture images
+struct Skybox {
+	unsigned int cubemapID;
+	float vertices[108];
+
+	unsigned int VAO;
+	unsigned int VBO;
 };
 
 // MeshInstance is a world model which references a mesh and a texture
@@ -89,6 +100,7 @@ struct Scene {
 
 	Camera camera;
 	LightSource lightSource;
+	Skybox skybox;
 	MouseInfo mouse;
 
 	~Scene() {
@@ -127,3 +139,6 @@ struct ResourcePool {
 		}
 	}
 };
+
+#define __my_structs__
+#endif
