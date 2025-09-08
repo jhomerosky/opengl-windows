@@ -565,6 +565,34 @@ void processInput(GLFWwindow* window, float deltaTime) {
 	}
 }
 
+// assume textureFiles is an array of 6 filenames
+unsigned int loadCubemap(const char** textureFiles) {
+	unsigned int textureID;
+	glGenTextures(1, &textureID);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, textureID);
+
+	int width;
+	int height;
+	int nr;
+
+	for (int i = 0; i < 6; i++) {
+		unsigned char *data = stbi_load(textureFiles[i], &width, &height, &nr, 0);
+		if (data)
+			glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+		else
+			printf("failed to load cubemap image: %s\n", textureFiles[i]);
+		stbi_image_free(data);
+	}
+
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+	return textureID;
+}
+
 // ===== INIT FUNCTIONS ===== 
 // called before the loop 
 void initOpenGL() {
@@ -662,6 +690,84 @@ int initMesh(Mesh* mesh) {
 	return 0;
 }
 
+// @TODO: set up VAO/VBO(/EBO?) for the skybox correctly
+void initSkybox() {
+	const char* skyboxFiles[] = {
+		"resources/skybox/skybox01/right.jpg",
+		"resources/skybox/skybox01/left.jpg",
+		"resources/skybox/skybox01/top.jpg",
+		"resources/skybox/skybox01/bottom.jpg",
+		"resources/skybox/skybox01/front.jpg",
+		"resources/skybox/skybox01/back.jpg"
+	};
+	global_scene.skybox.cubemapID = loadCubemap(skyboxFiles);
+
+	// @TODO: clean up this vertex initialization
+	const float skybox_vertices[108] = {
+		// positions          
+	    -1.0f,  1.0f, -1.0f,
+		-1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+		 1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f,
+
+		-1.0f, -1.0f,  1.0f,
+		-1.0f, -1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f,  1.0f,
+		-1.0f, -1.0f,  1.0f,
+
+		 1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+
+		-1.0f, -1.0f,  1.0f,
+		-1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f, -1.0f,  1.0f,
+		-1.0f, -1.0f,  1.0f,
+
+		-1.0f,  1.0f, -1.0f,
+		 1.0f,  1.0f, -1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		-1.0f,  1.0f,  1.0f,
+		-1.0f,  1.0f, -1.0f,
+
+		-1.0f, -1.0f, -1.0f,
+		-1.0f, -1.0f,  1.0f,
+		 1.0f, -1.0f, -1.0f,
+	  	 1.0f, -1.0f, -1.0f,
+		-1.0f, -1.0f,  1.0f,
+		 1.0f, -1.0f,  1.0f
+	};
+
+	for (int i = 0; i < 108; i++)
+		global_scene.skybox.vertices[i] = skybox_vertices[i];
+
+	// Generate objects
+	glGenVertexArrays(1, &(global_scene.skybox.VAO));
+	glGenBuffers(1, &(global_scene.skybox.VBO));
+
+	// Bind objects
+	glBindVertexArray(global_scene.skybox.VAO);
+	glBindBuffer(GL_ARRAY_BUFFER, global_scene.skybox.VBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(global_scene.skybox.vertices), &(global_scene.skybox.vertices), GL_STATIC_DRAW);
+
+	// Configure vertex attributes
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*sizeof(float), (void*)0); // Position
+	glEnableVertexAttribArray(0);
+
+	// Unbind this VAO
+	glBindVertexArray(0);
+}
+
 // initializes an initial meshInstance with a hardcoded mesh value
 void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
 	meshInstance->mesh = global_resource_pool.meshes[resourceId];
@@ -683,7 +789,7 @@ void loadScene() {
 	for (int i = 0; i < global_resource_pool.meshCount; i++) {
 		MeshInstance* model = (MeshInstance*)malloc(sizeof(MeshInstance));
 		setDefaultMeshInstance(model, i);
-		model->pos[0] = i*5;
+		model->pos[0] = i*spacing;
 		model->pos[1] = 0;
 		model->pos[2] = 0;
 		addMeshInstanceToGlobalScene(model);
@@ -693,6 +799,12 @@ void loadScene() {
 	global_scene.lightSource.pos[0] = 5.0f;
 	global_scene.lightSource.pos[1] = 50.f;
 	global_scene.lightSource.pos[2] = 15.0f;
+
+	// skybox 
+	// @TODO: figure out where the best place to call this is
+	initSkybox();
+
+	
 }
 
 // this should probably be refactored
@@ -793,23 +905,27 @@ int main(int argc, char** argv) {
 	// fragment: individual pixel information (position, color, etc) linearly interpolated from vertices
 	// fragment shader: defines transformation on individual fragments (usually color)
 	//////////////////////////////////////////////
-	const char* vertexShaderSource = loadShaderSource("src/shaders/basicShader.vs");
-	const char* fragmentShaderSource = loadShaderSource("src/shaders/basicShader.fs");
-	GLuint shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
-	free((void*)vertexShaderSource);
-	free((void*)fragmentShaderSource);
+	unsigned int basicShader = loadShader("src/shaders/basicShader.vs", "src/shaders/basicShader.fs");
+	unsigned int skyboxShader = loadShader("src/shaders/skyboxShader.vs", "src/shaders/skyboxShader.fs");
 
 	// get locations to shader uniforms
-	unsigned int modelColorLoc = glGetUniformLocation(shaderProgram, "modelColor");
-	unsigned int lightPosLoc = glGetUniformLocation(shaderProgram, "lightPos");
-	unsigned int lightColorLoc = glGetUniformLocation(shaderProgram, "lightColor");
-	unsigned int viewPos = glGetUniformLocation(shaderProgram, "viewPos");
-	unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
-	unsigned int normLoc = glGetUniformLocation(shaderProgram, "normal");
-	unsigned int hasNormalsLoc = glGetUniformLocation(shaderProgram, "hasNormals");
-	unsigned int hasTextureLoc = glGetUniformLocation(shaderProgram, "hasTexture");
-	unsigned int viewLoc = glGetUniformLocation(shaderProgram, "view");
-	unsigned int projLoc = glGetUniformLocation(shaderProgram, "proj");
+	unsigned int modelColorLoc = glGetUniformLocation(basicShader, "modelColor");
+	unsigned int lightPosLoc = glGetUniformLocation(basicShader, "lightPos");
+	unsigned int lightColorLoc = glGetUniformLocation(basicShader, "lightColor");
+	unsigned int viewPos = glGetUniformLocation(basicShader, "viewPos");
+	unsigned int modelLoc = glGetUniformLocation(basicShader, "model");
+	unsigned int normLoc = glGetUniformLocation(basicShader, "normal");
+	unsigned int hasNormalsLoc = glGetUniformLocation(basicShader, "hasNormals");
+	unsigned int hasTextureLoc = glGetUniformLocation(basicShader, "hasTexture");
+	unsigned int viewLoc = glGetUniformLocation(basicShader, "view");
+	unsigned int projLoc = glGetUniformLocation(basicShader, "proj");
+
+	// skybox shader uniforms
+	glUseProgram(skyboxShader);
+	unsigned int skyboxLoc = glGetUniformLocation(skyboxShader, "skybox");
+	unsigned int skyboxViewLoc = glGetUniformLocation(skyboxShader, "view");
+	unsigned int skyboxProjLoc = glGetUniformLocation(skyboxShader, "proj");
+	glUniform1f(skyboxLoc, 0);
 
 	// model, view, proj matrices
 	glm::mat4 model;
@@ -836,7 +952,7 @@ int main(int argc, char** argv) {
 		proj = glm::perspective(radiansf(45.0f), (float)windowWidth / (float)windowHeight, 0.1f, 500.0f);
 
 		// Build the view matrix (depends on camera update)
-		glUseProgram(shaderProgram);
+		glUseProgram(basicShader);
 		glm::vec3 camera_pos = glm::vec3(global_scene.camera.pos[0], global_scene.camera.pos[1], global_scene.camera.pos[2]);
 		view = glm::lookAt(
 			camera_pos, 
@@ -875,12 +991,22 @@ int main(int argc, char** argv) {
 			glUniform1i(hasTextureLoc, 0);
 
 			// Issue a draw call
-			glUseProgram(shaderProgram);
+			glUseProgram(basicShader);
 			glDrawElements(GL_TRIANGLES, mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
 		}
+		// draw skybox last
+		glDepthFunc(GL_LEQUAL);
+		glUseProgram(skyboxShader);
+		view = glm::mat4(glm::mat3(view));
+		glUniformMatrix4fv(skyboxViewLoc, 1, GL_FALSE, glm::value_ptr(view));
+		glUniformMatrix4fv(skyboxProjLoc, 1, GL_FALSE, glm::value_ptr(proj));
+		glBindVertexArray(global_scene.skybox.VAO);
+		glBindTexture(GL_TEXTURE_CUBE_MAP, global_scene.skybox.cubemapID);
+		glDrawArrays(GL_TRIANGLES, 0, 36);
+		glDepthFunc(GL_LESS);
+
 		// Unbind the active VAO
 		glBindVertexArray(0);
-
 		// Swap buffers
 		glfwSwapBuffers(window);
 		glfwPollEvents();

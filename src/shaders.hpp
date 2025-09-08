@@ -1,39 +1,16 @@
+#ifndef __my_shaders__
+
 #include <glad/glad.h>
 #include <stdlib.h>
 #include <stdio.h>
 
+#include "file_utils.hpp"
+
 // ===== header =====
-const char* loadShaderSource(const char* filename);
 GLuint compileShader(GLenum type, const char* source);
+GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource);
+GLuint loadShader(char* vertexShaderSource, char* fragmentShaderSource);
 // ===== end header =====
-
-const char* loadShaderSource(const char* filename) {
-    FILE* file = fopen(filename, "r");
-    if (!file) {
-        fprintf(stderr, "Failed to open shader file: %s\n", filename);
-        return NULL;
-    }
-
-    // Seek to end to get file size
-    fseek(file, 0, SEEK_END);
-    long length = ftell(file);
-    rewind(file);
-
-    // Allocate buffer (+1 for null terminator)
-    char* buffer = (char*)malloc(sizeof(char) * (length + 1));
-    if (!buffer) {
-        fclose(file);
-        fprintf(stderr, "Memory allocation failed\n");
-        return NULL;
-    }
-
-    // Read file into buffer
-    size_t read_size = fread(buffer, 1, length, file);
-    buffer[read_size] = '\0'; // Null-terminate
-
-    fclose(file);
-    return buffer;
-}
 
 // Compile the shader
 GLuint compileShader(GLenum type, const char* source) {
@@ -80,3 +57,18 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
 
     return shaderProgram;
 }
+
+// input filenames for vertex shader and fragment shader sources
+// output shader reference
+GLuint loadShader(const char* vertexShaderSourceFilename, const char* fragmentShaderSourceFilename) {
+	const char* vertexShaderSource = mallocTextFromFile(vertexShaderSourceFilename);
+	const char* fragmentShaderSource = mallocTextFromFile(fragmentShaderSourceFilename);
+	GLuint shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
+	free((void*)vertexShaderSource);
+	free((void*)fragmentShaderSource);
+
+	return shaderProgram;
+}
+
+#define __my_shaders__
+#endif

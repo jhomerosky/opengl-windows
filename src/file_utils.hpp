@@ -1,3 +1,5 @@
+#ifndef __my_file_utils__
+
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -48,3 +50,6 @@ const char* mallocTextFromFile(const char* filename) {
     fclose(file);
     return text;
 }
+
+#define __my_file_utils__
+#endif
