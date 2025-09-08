@@ -602,7 +602,7 @@ void initOpenGL() {
 	glEnable(GL_DEPTH_TEST);  
 
 
-	glfwSwapInterval(1); // disable vsync
+	glfwSwapInterval(1); // 0: disable vsync | 1: enable vsync
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // wireframe mode
 }
 
@@ -700,6 +700,7 @@ void initSkybox() {
 		"resources/skybox/skybox01/front.jpg",
 		"resources/skybox/skybox01/back.jpg"
 	};
+
 	global_scene.skybox.cubemapID = loadCubemap(skyboxFiles);
 
 	// @TODO: clean up this vertex initialization
@@ -802,9 +803,9 @@ void loadScene() {
 
 	// skybox 
 	// @TODO: figure out where the best place to call this is
+	tic();
 	initSkybox();
-
-	
+	printf("time to load skybox: %.6f ms\n", toc());
 }
 
 // this should probably be refactored
@@ -836,7 +837,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		printf("  TIME LOAD %s: %.6f ms\n", list_of_meshes[i], toc());
 		// if we couldn't load normals from file, then compute them now
 		// @TODO: write normals back to file?
-		if (1 || !mesh->has_normals) {
+		if (!mesh->has_normals) {
 			printf("  Normals not found. Computing normals and rebuilding mesh.\n");
 			//compute_vnormal_flat(mesh);
 			const int tol = 5;
