@@ -83,15 +83,6 @@ static inline unsigned long long vertexHash(Vertex* vertex, const int decimalFil
 	return (primes[0] * vecints[0]) ^ (primes[1] * vecints[1]) ^ (primes[2] * vecints[2]);
 }
 
-static inline bool equals3f(const float v1[3], const float v2[3], const float eps) {
-	//printf("equals3f(\n%f %f %f\n%f %f %f\n)\n", v1[0], v1[1], v1[2], v2[0], v2[1], v2[2]);
-	return (
-		abs(v1[0] - v2[0]) < eps &&
-		abs(v1[1] - v2[1]) < eps &&
-		abs(v1[2] - v2[2]) < eps
-	);
-}
-
 // @ASSUMING: vertices are deduplicated
 // compute each face's normal vector, add vnormal to each component vector, normalize all vectors
 int compute_vnormal_smooth(Mesh* mesh) {
@@ -129,7 +120,7 @@ int compute_vnormal_smooth(Mesh* mesh) {
 		mesh->vertices[mesh->faces[i].vertexId[2]].normal[1] += res[1];
 		mesh->vertices[mesh->faces[i].vertexId[2]].normal[2] += res[2];
 	}
-	// normalize every vertex's vnormal
+	// normalize every vertex's vnormal; @NOTE: is this bottlenecked by thread perf or by cache?
 	#pragma omp parallel for
 	for (int i = 0; i < mesh->num_vertices; i++) {
 		normalize_in_place3f(mesh->vertices[i].normal);
@@ -141,6 +132,8 @@ int compute_vnormal_smooth(Mesh* mesh) {
 // deduplicate a mesh's vertex list on position with tolerance of 1e-(tol)
 // @TODO: some vertices are already used by many different faces and this will still check those anyways
 //        which results in a very large number of unnecessary checks. can we eliminate that behavior?
+// @NOTE: deduplication helps with smooth shading, but in the end especially with texture uv coords we will still need
+//        to use face-vertices on gpu. Time spent improving this is probably not productive.
 int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	struct HashNode {
 		unsigned int data; // map vertex.pos -> index in the new vertex array (vertex_list[data].pos is the key to match)
@@ -209,59 +202,19 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	return 0;
 }
 
-// @Assuming: CCW face orientation, faces are triangles
-// @Mutates the size of the mesh to 3*(num_faces)
-// @TODO: split into mutating function and vnormal compute function
-int compute_vnormal_flat(Mesh* mesh) {
-	// for each face:
-	// e1 = v2 - v1, e2 = v3 - v2
-	// fnormal = normalize(cross(e1, e2))
-	// assign this normal to all vertices in this face
-	// build new vertex list from unique pairs of v, vnormal
-
+// Mutates the size of the mesh to 3*(num_faces) vertices.
+// Face-vertices: a vertex contains { pos, vn, uv } so consider each vertex with the face it belongs to
+int realloc_mesh_with_face_vertices(Mesh* mesh) {
 	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces);
-	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list\n"); return -1; }
+	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in realloc_mesh_with_face_vertices\n"); return -1; }
 
+	// TODO: benchmark this; possibly parallelism introduces more cache misses and hurts performance
 	#pragma omp parallel for
 	for (int i = 0; i < mesh->num_faces; i++) {
-		// private memory
-		float e1[3];
-		float e2[3];
-		float res[3];
-		// vertices
-		Vertex v0 = mesh->vertices[mesh->faces[i].vertexId[0]];
-		Vertex v1 = mesh->vertices[mesh->faces[i].vertexId[1]];
-		Vertex v2 = mesh->vertices[mesh->faces[i].vertexId[2]];
-		// e1
-		e1[0] = v1.pos[0] - v0.pos[0];
-		e1[1] = v1.pos[1] - v0.pos[1];
-		e1[2] = v1.pos[2] - v0.pos[2];
-		// e2
-		e2[0] = v2.pos[0] - v1.pos[0];
-		e2[1] = v2.pos[1] - v1.pos[1];
-		e2[2] = v2.pos[2] - v1.pos[2];
-
-		// cross product will not be near 0 because we are using edges of a triangle
-		cross3f_to_vec3(e1, e2, res);
-		normalize_in_place3f(res);
-
-		// new set new vertices
-		new_vertex_list[i*3] = v0;
-		new_vertex_list[i*3 + 1] = v1;
-		new_vertex_list[i*3 + 2] = v2;
-
-		// for each vn computed (= num faces), store each (of 3) vertices with vn in new list of size 3*num_faces
-		new_vertex_list[i*3].normal[0]     = res[0];
-		new_vertex_list[i*3 + 1].normal[0] = res[0];
-		new_vertex_list[i*3 + 2].normal[0] = res[0];
-
-		new_vertex_list[i*3].normal[1]     = res[1];
-		new_vertex_list[i*3 + 1].normal[1] = res[1];
-		new_vertex_list[i*3 + 2].normal[1] = res[1];
-
-		new_vertex_list[i*3].normal[2]     = res[2];
-		new_vertex_list[i*3 + 1].normal[2] = res[2];
-		new_vertex_list[i*3 + 2].normal[2] = res[2];
+		// add to new list; note no overlap between threads
+		new_vertex_list[i*3] = mesh->vertices[mesh->faces[i].vertexId[0]];
+		new_vertex_list[i*3 + 1] = mesh->vertices[mesh->faces[i].vertexId[1]];
+		new_vertex_list[i*3 + 2] = mesh->vertices[mesh->faces[i].vertexId[2]];
 
 		// point faces to new vertex index
 		mesh->faces[i].vertexId[0] = i*3;
@@ -271,13 +224,53 @@ int compute_vnormal_flat(Mesh* mesh) {
 	free(mesh->vertices);
 	mesh->vertices = new_vertex_list;
 	mesh->num_vertices = 3 * mesh->num_faces;
+
+	return 0;
+}
+
+// Compute vnormals for flat shading. Each vertex of a face uses the face's normal.
+// @Assuming: CCW face orientation, faces are triangles, vertex list is face-vertex
+int compute_vnormal_flat(Mesh* mesh) {
+	// for each face:
+	// e1 = v2 - v1, e2 = v3 - v2
+	// fnormal = normalize(cross(e1, e2))
+	// assign this normal to all vertices in this face
+
+	#pragma omp parallel for
+	for (int i = 0; i < mesh->num_faces; i++) {
+		// private memory
+		float e1[3];
+		float e2[3];
+		float res[3];
+		// vertices
+		Vertex *v0 = &mesh->vertices[mesh->faces[i].vertexId[0]];
+		Vertex *v1 = &mesh->vertices[mesh->faces[i].vertexId[1]];
+		Vertex *v2 = &mesh->vertices[mesh->faces[i].vertexId[2]];
+		// e1
+		e1[0] = v1->pos[0] - v0->pos[0];
+		e1[1] = v1->pos[1] - v0->pos[1];
+		e1[2] = v1->pos[2] - v0->pos[2];
+		// e2
+		e2[0] = v2->pos[0] - v1->pos[0];
+		e2[1] = v2->pos[1] - v1->pos[1];
+		e2[2] = v2->pos[2] - v1->pos[2];
+
+		// cross product will not be near 0 because we are using edges of a triangle
+		cross3f_to_vec3(e1, e2, res);
+		normalize_in_place3f(res);
+
+		// write normal to vertex
+		set3f(v0->normal, res[0], res[1], res[2]);
+		set3f(v1->normal, res[0], res[1], res[2]);
+		set3f(v2->normal, res[0], res[1], res[2]);
+	}
 	mesh->has_normals = true;
 
 	return 0;
 }
 
 // @Assuming: vertex_normal[i] goes to vertex[i] for all i
-// @TODO: speed this up. taking 2 seconds to read 125mb file.
+// @TODO: speed this up. taking 2 seconds to read 125mb text file. speedup may require better non-text file format.
 int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
 	// size of mesh fields
@@ -335,9 +328,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	while (fgets(buf, 512, file) != NULL) {
 		if (buf[0] == 'v' && buf[1] == ' ') {
 			if (sscanf(buf, "v %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
-				mesh->vertices[v_index].pos[0] = pos[0];
-				mesh->vertices[v_index].pos[1] = pos[1];
-				mesh->vertices[v_index].pos[2] = pos[2];
+				set3f(mesh->vertices[v_index].pos, pos[0], pos[1], pos[2]);
 				++v_index;
 			}
 		}
@@ -350,9 +341,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 		}
 		if (vnormals_enabled && buf[0] == 'v' && buf[1] == 'n') {
 			if (sscanf(buf, "vn %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
-				mesh->vertices[vn_index].normal[0] = pos[0];
-				mesh->vertices[vn_index].normal[1] = pos[1];
-				mesh->vertices[vn_index].normal[2] = pos[2];
+				set3f(mesh->vertices[vn_index].normal, pos[0], pos[1], pos[2]);
 				++vn_index;
 			}
 		}
@@ -608,17 +597,9 @@ void initOpenGL() {
 
 // default values for camera
 void initCamera(Camera& camera) {
-	camera.pos[0] = 0.0f;
-	camera.pos[1] = 0.0f;
-	camera.pos[2] = 3.0f;
-
-	camera.front[0] =  0.0f;
-	camera.front[1] =  0.0f;
-	camera.front[2] = -1.0f;
-
-	camera.up[0] = 0.0f;
-	camera.up[1] = 1.0f;
-	camera.up[2] = 0.0f;
+	set3f(camera.pos,   0.0f, 0.0f,  3.0f);
+	set3f(camera.front, 0.0f, 0.0f, -1.0f);
+	set3f(camera.up,    0.0f, 1.0f,  0.0f);
 
 	camera.pitch = 0.0f;
 	camera.yaw = -90.0f;
@@ -634,13 +615,8 @@ void initCamera(Camera& camera) {
 
 // default values for light source
 void initLightSource(LightSource& lightSource) {
-	lightSource.pos[0] = 0.0f;
-	lightSource.pos[1] = 0.0f;
-	lightSource.pos[2] = 0.0f;
-
-	lightSource.color[0] = 1.0f;
-	lightSource.color[1] = 1.0f;
-	lightSource.color[2] = 1.0f;
+	set3f(lightSource.pos, 0.0f, 0.0f, 0.0f);
+	set3f(lightSource.color, 1.0f, 1.0f, 1.0f);
 }
 
 // default values for MouseInfo (part of global scene)
@@ -690,15 +666,17 @@ int initMesh(Mesh* mesh) {
 	return 0;
 }
 
-// @TODO: set up VAO/VBO(/EBO?) for the skybox correctly
+// Load skybox images from file, initialize GL cubemap object, define skybox vertices, initialize skybox VAO/VBO, upload vertices to GPU
+// TODO: Clean up; skybox loads from file can go to global pool; etc
 void initSkybox() {
+	// TODO: move this to the global resource pool initialization?
 	const char* skyboxFiles[] = {
-		"resources/skybox/skybox01/right.jpg",
-		"resources/skybox/skybox01/left.jpg",
-		"resources/skybox/skybox01/top.jpg",
-		"resources/skybox/skybox01/bottom.jpg",
-		"resources/skybox/skybox01/front.jpg",
-		"resources/skybox/skybox01/back.jpg"
+		"resources/skybox/skybox01/right.png",
+		"resources/skybox/skybox01/left.png",
+		"resources/skybox/skybox01/top.png",
+		"resources/skybox/skybox01/bottom.png",
+		"resources/skybox/skybox01/front.png",
+		"resources/skybox/skybox01/back.png"
 	};
 
 	global_scene.skybox.cubemapID = loadCubemap(skyboxFiles);
@@ -773,15 +751,11 @@ void initSkybox() {
 void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
 	meshInstance->mesh = global_resource_pool.meshes[resourceId];
 	meshInstance->texture = nullptr;
-	for (int i = 0; i < 3; i++) {
-		meshInstance->pos[i] = 0.0f;
-		meshInstance->color[i] = 1.0f;
-		meshInstance->scale[i] = 1.0f;
-	}
-	meshInstance->rotation[0] = 1.0f;
-	meshInstance->rotation[1] = 0.0f;
-	meshInstance->rotation[2] = 0.0f;
-	meshInstance->rotation[3] = 0.0f;
+
+	set3f(meshInstance->pos, 0.0f, 0.0f, 0.0f);
+	set3f(meshInstance->color, 1.0f, 1.0f, 1.0f);
+	set3f(meshInstance->scale, 1.0f, 1.0f, 1.0f);
+	set4f(meshInstance->rotation, 1.0f, 0.0f, 0.0f, 0.0f);
 }
 
 // load initial scene
@@ -790,16 +764,12 @@ void loadScene() {
 	for (int i = 0; i < global_resource_pool.meshCount; i++) {
 		MeshInstance* model = (MeshInstance*)malloc(sizeof(MeshInstance));
 		setDefaultMeshInstance(model, i);
-		model->pos[0] = i*spacing;
-		model->pos[1] = 0;
-		model->pos[2] = 0;
+		set3f(model->pos, i*spacing, 0.0f, 0.0f);
 		addMeshInstanceToGlobalScene(model);
 	}
 
 	// light source
-	global_scene.lightSource.pos[0] = 5.0f;
-	global_scene.lightSource.pos[1] = 50.f;
-	global_scene.lightSource.pos[2] = 15.0f;
+	set3f(global_scene.lightSource.pos, 5.0f, 50.0f, 15.0f);
 
 	// skybox 
 	// @TODO: figure out where the best place to call this is
@@ -839,6 +809,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		// @TODO: write normals back to file?
 		if (!mesh->has_normals) {
 			printf("  Normals not found. Computing normals and rebuilding mesh.\n");
+			//realloc_mesh_with_face_vertices(mesh);
 			//compute_vnormal_flat(mesh);
 			const int tol = 5;
 			tic();
@@ -883,10 +854,11 @@ int main(int argc, char** argv) {
 	initGlobalScene();
 	// @TODO: load_resources_onto_pools();
 	initGlobalResourcePoolMallocMeshAndMeshFields();
+	//init_global_resources();
 	loadScene();
 
-	// init vars for fps counter
-	// @TODO: condense this in some way? wrap in a global singleton?
+	// vars for fps counter
+	// @TODO: wrap this?
 	float lastTime;
 	float currTime = glfwGetTime();
 	float deltaTime;
@@ -1028,6 +1000,8 @@ int main(int argc, char** argv) {
 		}
 	} // end main render loop
 
+	// free resources
+	free_resource_pool(&global_resource_pool);
 
     glfwDestroyWindow(window);
     glfwTerminate();

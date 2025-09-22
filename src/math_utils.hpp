@@ -1,4 +1,4 @@
-#define _USE_MATH_DEFINES
+#ifndef __my_math__
 #include <math.h>
 
 // ===== header =====
@@ -6,11 +6,14 @@ unsigned int getSeed();
 float randf();
 static inline float radiansf(float degrees);
 int isNumber(const char *str);
-float maxf(float a, float b);
-static inline float dot(float u[3], float v[3]);
+static inline void set3f(float v[3], const float v0, const float v1, const float v2);
+static inline void set4f(float v[4], const float v0, const float v1, const float v2, const float v3);
+static inline float maxf(float a, float b);
+static inline float dot(const float u[3], const float v[3]);
 void quat_mult(float p[4], float q[4]);
-void cross3f_to_vec3(float v1[3], float v2[3], float res[3]);
+static inline void cross3f_to_vec3(const float v1[3], const float v2[3], float res[3]);
 void normalize_in_place3f(float v[3]);
+static inline bool equals3f(const float v1[3], const float v2[3], const float eps);
 // ===== end header =====
 
 // get a seed for the srand function
@@ -32,13 +35,21 @@ int isNumber(const char *str) {
 	return *end == '\0';
 }
 
-void cross3f_to_vec3(float v1[3], float v2[3], float res[3]) {
+static inline bool equals3f(const float v1[3], const float v2[3], const float eps) {
+	return (
+		abs(v1[0] - v2[0]) < eps &&
+		abs(v1[1] - v2[1]) < eps &&
+		abs(v1[2] - v2[2]) < eps
+	);
+}
+
+static inline void cross3f_to_vec3(const float v1[3], const float v2[3], float res[3]) {
     res[0] = v1[1] * v2[2] - v1[2] * v2[1];
     res[1] = v1[2] * v2[0] - v1[0] * v2[2];
     res[2] = v1[0] * v2[1] - v1[1] * v2[0];
 }
 
-static inline float dot(float u[3], float v[3]) {
+static inline float dot(const float u[3], const float v[3]) {
 	return u[0]*v[0] + u[1]*v[1] + u[2]*v[2];
 }
 
@@ -77,8 +88,14 @@ void normalize_in_place3f(float v[3]) {
     v[2] *= norm_factor;
 }
 
-float maxf(float a, float b) { 
+static inline float maxf(float a, float b) { 
 	return b < a ? a : b;
 }
 
 static inline float radiansf(float degrees) { return degrees * 0.01745329251994329576923690768489f; }
+
+static inline void set3f(float v[3], const float v0, const float v1, const float v2) { v[0] = v0; v[1] = v1; v[2] = v2; }
+static inline void set4f(float v[4], const float v0, const float v1, const float v2, const float v3) { v[0] = v0; v[1] = v1; v[2] = v2; v[3] = v3; }
+
+#define __my_math__
+#endif
