@@ -64,6 +64,7 @@ struct Texture {
 	unsigned int textureID;
 };
 
+// Shader wrapper
 struct Shader {
 	unsigned int shaderID;
 
@@ -111,6 +112,15 @@ struct MeshInstance {
 	float scale[3];
 	float rotation[4]; // orientation as a quaternion rotation on (1, 0, 0, 0)
 	float color[3];
+
+	float velocity[3];
+	
+	// bitfield
+	// physics = enabled
+	// physics & 1 = is_falling
+	// physics & 2 = is_collidable
+	unsigned int physics;
+
 };
 
 // Camera encodes the view
