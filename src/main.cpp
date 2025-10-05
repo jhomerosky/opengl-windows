@@ -428,10 +428,24 @@ int addMeshInstanceToGlobalScene(MeshInstance* meshInstance) {
 }
 
 // register mesh
-int addMeshToResourcePool(Mesh* mesh) {
+int addMeshToGlobalPool(Mesh* mesh) {
 	if (global_resource_pool.meshCount != __MAX_MESHES__)
 		global_resource_pool.meshes[global_resource_pool.meshCount++] = mesh;
 	return global_resource_pool.meshCount;
+}
+
+// register texture
+int addTextureToGlobalPool(Texture* texture) {
+	if (global_resource_pool.textureCount != __MAX_TEXTURES__)
+		global_resource_pool.textures[global_resource_pool.textureCount++] = texture;
+	return global_resource_pool.textureCount;
+}
+
+// register shader
+int addShaderToGlobalPool(Shader* shader) {
+	if (global_resource_pool.shaderCount != __MAX_SHADERS__)
+		global_resource_pool.shaders[global_resource_pool.shaderCount++] = shader;
+	return global_resource_pool.shaderCount;
 }
 
 // Upload mesh to the GPU
@@ -554,6 +568,112 @@ void processInput(GLFWwindow* window, float deltaTime) {
 	}
 }
 
+void renderScene(GLFWwindow* window) {
+	// Clear the screen buffer
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	// @TEMP: hardcoding the shader locations here for now, could cause a perf slowdown
+	unsigned int basicShader = global_resource_pool.shaders[0]->shaderID;
+	unsigned int skyboxShader = global_resource_pool.shaders[1]->shaderID;
+
+	// basic shader uniforms
+	unsigned int modelColorLoc = glGetUniformLocation(basicShader, "modelColor");
+	unsigned int lightPosLoc = glGetUniformLocation(basicShader, "lightPos");
+	unsigned int lightColorLoc = glGetUniformLocation(basicShader, "lightColor");
+	unsigned int viewPos = glGetUniformLocation(basicShader, "viewPos");
+	unsigned int modelLoc = glGetUniformLocation(basicShader, "model");
+	unsigned int normLoc = glGetUniformLocation(basicShader, "normal");
+	unsigned int hasNormalsLoc = glGetUniformLocation(basicShader, "hasNormals");
+	unsigned int hasTextureLoc = glGetUniformLocation(basicShader, "hasTexture");
+	unsigned int viewLoc = glGetUniformLocation(basicShader, "view");
+	unsigned int projLoc = glGetUniformLocation(basicShader, "proj");
+
+	// skybox shader uniforms
+	unsigned int skyboxLoc = glGetUniformLocation(skyboxShader, "skybox");
+	unsigned int skyboxViewLoc = glGetUniformLocation(skyboxShader, "view");
+	unsigned int skyboxProjLoc = glGetUniformLocation(skyboxShader, "proj");
+
+	// Build the projection matrix (depends on fov, aspect ratio, draw distance)
+	glfwGetFramebufferSize(window, &global_scene.windowWidth, &global_scene.windowHeight);
+
+	// TODO: remove glm dependency and just build the matrices myself, remove the memcpys
+	glm::mat4 proj_temp = glm::perspective(radiansf(45.0f), (float)global_scene.windowWidth / (float)global_scene.windowHeight, 0.1f, 500.0f);
+	memcpy(global_scene.proj, glm::value_ptr(proj_temp), sizeof(float)*16);
+
+	// Build the view matrix (depends on camera update)
+	glm::vec3 camera_pos = glm::vec3(global_scene.camera.pos[0], global_scene.camera.pos[1], global_scene.camera.pos[2]);
+	glm::mat4 view_temp = glm::lookAt(
+		camera_pos, 
+		camera_pos + glm::vec3(global_scene.camera.front[0], global_scene.camera.front[1], global_scene.camera.front[2]), 
+		glm::vec3(global_scene.camera.up[0], global_scene.camera.up[1], global_scene.camera.up[2])
+	);
+	memcpy(global_scene.view, glm::value_ptr(view_temp), sizeof(float)*16);
+	
+	// upload uniforms to shader
+	glUseProgram(basicShader);
+	glUniformMatrix4fv(projLoc, 1, GL_FALSE, global_scene.proj);
+	glUniformMatrix4fv(viewLoc, 1, GL_FALSE, global_scene.view);
+	glUniform3fv(lightPosLoc, 1, global_scene.lightSource.pos);
+	glUniform3fv(lightColorLoc, 1, global_scene.lightSource.color);
+	glUniform3fv(viewPos, 1, global_scene.camera.pos);
+
+	// Loop through the scene, build and upload the model matrix, then draw
+	for (int i = 0; i < global_scene.meshInstanceCount; i++) {
+		MeshInstance* meshInstance = global_scene.meshInstances[i];
+		if (meshInstance == nullptr || meshInstance->globalMeshId < 0) continue;
+		Mesh* mesh = global_resource_pool.meshes[meshInstance->globalMeshId];
+		if (mesh == nullptr) continue;
+		// Bind the VAO (restores all attribute and buffer settings)
+		glBindVertexArray(mesh->VAO);
+
+		// Build model and normal matrix
+		// TODO: remove glm dependency, build myself, remove memcpy
+		glm::mat4 translate = glm::translate(glm::mat4(1.0f), glm::vec3(meshInstance->pos[0], meshInstance->pos[1], meshInstance->pos[2]));
+		glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(meshInstance->scale[0], meshInstance->scale[1], meshInstance->scale[2]));
+		glm::mat4 rotate = glm::mat4_cast(glm::quat(meshInstance->rotation[0], meshInstance->rotation[1], meshInstance->rotation[2], meshInstance->rotation[3]));
+		glm::mat4 model_temp = translate * rotate * scale;
+		memcpy(global_scene.model, glm::value_ptr(model_temp), sizeof(float)*16);
+		glm::mat3 normal_temp = glm::mat3(glm::transpose(glm::inverse(model_temp)));
+		memcpy(global_scene.normal, glm::value_ptr(normal_temp), sizeof(float)*9);
+
+		// upload uniforms to the shader
+		glUseProgram(basicShader);
+		glUniform3fv(modelColorLoc, 1, meshInstance->color);
+		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, global_scene.model);
+		glUniformMatrix3fv(normLoc, 1, GL_FALSE, global_scene.normal);
+		glUniform1i(hasNormalsLoc, mesh->has_normals);
+		glUniform1i(hasTextureLoc, 0);
+
+		// Issue a draw call
+		glDrawElements(GL_TRIANGLES, mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
+	}
+	// draw skybox last
+	glDepthFunc(GL_LEQUAL);
+
+	// perform equivalent of glm::mat4(glm::mat3(view))
+	global_scene.view[3] = 0.0f;
+	global_scene.view[7] = 0.0f;
+	global_scene.view[11] = 0.0f;
+	global_scene.view[12] = 0.0f;
+	global_scene.view[13] = 0.0f;
+	global_scene.view[14] = 0.0f;
+	global_scene.view[15] = 1.0f;
+
+	glUseProgram(skyboxShader);
+	glUniform1f(skyboxLoc, 0);
+	glUniformMatrix4fv(skyboxViewLoc, 1, GL_FALSE, global_scene.view);
+	glUniformMatrix4fv(skyboxProjLoc, 1, GL_FALSE, global_scene.proj);
+	glBindVertexArray(global_scene.skybox.VAO);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, global_scene.skybox.cubemapID);
+	glDrawArrays(GL_TRIANGLES, 0, 36);
+
+	// reset depth func
+	glDepthFunc(GL_LESS);
+
+	// Unbind the active VAO
+	glBindVertexArray(0);
+}
+
 // assume textureFiles is an array of 6 filenames
 unsigned int loadCubemap(const char** textureFiles) {
 	unsigned int textureID;
@@ -666,6 +786,36 @@ int initMesh(Mesh* mesh) {
 	return 0;
 }
 
+// load, compile, malloc, register shaders to the global resource pool
+// for now this hardcodes the shaders with ID
+void initShaders() {
+	//////////////////////////////////////////////
+	// what are SHADERS? two types we can control:
+	// vertex shader: defines transformation on individual vertices (usually position)
+	// fragment: individual pixel information (position, color, etc) linearly interpolated from vertices
+	// fragment shader: defines transformation on individual fragments (usually color)
+	//////////////////////////////////////////////
+	
+	const int numShaders = 2;
+	unsigned int basicShader = loadShader("src/shaders/basicShader.vs", "src/shaders/basicShader.fs");
+	unsigned int skyboxShader = loadShader("src/shaders/skyboxShader.vs", "src/shaders/skyboxShader.fs");
+
+	Shader* shader = (Shader*)malloc(sizeof(Shader)*numShaders);
+	shader[0].shaderID = basicShader;
+	shader[1].shaderID = skyboxShader;
+
+	for (int i = 0; i < numShaders; i++) {
+		addShaderToGlobalPool(&shader[i]);
+	}
+
+	// TODO: get locations to shader uniforms
+	//       if we enhance shader struct to dynamically use these,
+	//       then we can initialize that memory here
+	// glUseProgram(basicShader);
+	// unsigned int modelColorLoc = glGetUniformLocation(basicShader, "modelColor");
+	// ...
+}
+
 // Load skybox images from file, initialize GL cubemap object, define skybox vertices, initialize skybox VAO/VBO, upload vertices to GPU
 // TODO: Clean up; skybox loads from file can go to global pool; etc
 void initSkybox() {
@@ -749,8 +899,8 @@ void initSkybox() {
 
 // initializes an initial meshInstance with a hardcoded mesh value
 void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
-	meshInstance->mesh = global_resource_pool.meshes[resourceId];
-	meshInstance->texture = nullptr;
+	meshInstance->globalMeshId = resourceId;
+	meshInstance->globalTextureId = -1;
 
 	set3f(meshInstance->pos, 0.0f, 0.0f, 0.0f);
 	set3f(meshInstance->color, 1.0f, 1.0f, 1.0f);
@@ -758,14 +908,14 @@ void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
 	set4f(meshInstance->rotation, 1.0f, 0.0f, 0.0f, 0.0f);
 }
 
-// load initial scene
+// load initial scene (malloc mesh instances)
 void loadScene() {
 	const float spacing = 5;
 	for (int i = 0; i < global_resource_pool.meshCount; i++) {
-		MeshInstance* model = (MeshInstance*)malloc(sizeof(MeshInstance));
-		setDefaultMeshInstance(model, i);
-		set3f(model->pos, i*spacing, 0.0f, 0.0f);
-		addMeshInstanceToGlobalScene(model);
+		MeshInstance* meshInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
+		setDefaultMeshInstance(meshInstance, i);
+		set3f(meshInstance->pos, i*spacing, 0.0f, 0.0f);
+		addMeshInstanceToGlobalScene(meshInstance);
 	}
 
 	// light source
@@ -775,7 +925,8 @@ void loadScene() {
 	// @TODO: figure out where the best place to call this is
 	tic();
 	initSkybox();
-	printf("time to load skybox: %.6f ms\n", toc());
+	float toc_time = toc();
+	printf("time to load skybox: %.6f ms\n", toc_time);
 }
 
 // this should probably be refactored
@@ -820,7 +971,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 			printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", list_of_meshes[i], toc());
 		}
 		printf("  v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
-		addMeshToResourcePool(mesh);
+		addMeshToGlobalPool(mesh);
 		uploadMeshBuffers(mesh);
 	}
 	return global_resource_pool.meshCount;
@@ -855,6 +1006,7 @@ int main(int argc, char** argv) {
 	// @TODO: load_resources_onto_pools();
 	initGlobalResourcePoolMallocMeshAndMeshFields();
 	//init_global_resources();
+	initShaders();
 	loadScene();
 
 	// vars for fps counter
@@ -872,41 +1024,6 @@ int main(int argc, char** argv) {
     const char* glVersion = (const char*)glGetString(GL_VERSION); // driver info
     const char* glRenderer = (const char*)glGetString(GL_RENDERER); // gpu info
 
-	//////////////////////////////////////////////
-	// what are SHADERS? two types we can control:
-	// vertex shader: defines transformation on individual vertices (usually position)
-	// fragment: individual pixel information (position, color, etc) linearly interpolated from vertices
-	// fragment shader: defines transformation on individual fragments (usually color)
-	//////////////////////////////////////////////
-	unsigned int basicShader = loadShader("src/shaders/basicShader.vs", "src/shaders/basicShader.fs");
-	unsigned int skyboxShader = loadShader("src/shaders/skyboxShader.vs", "src/shaders/skyboxShader.fs");
-
-	// get locations to shader uniforms
-	unsigned int modelColorLoc = glGetUniformLocation(basicShader, "modelColor");
-	unsigned int lightPosLoc = glGetUniformLocation(basicShader, "lightPos");
-	unsigned int lightColorLoc = glGetUniformLocation(basicShader, "lightColor");
-	unsigned int viewPos = glGetUniformLocation(basicShader, "viewPos");
-	unsigned int modelLoc = glGetUniformLocation(basicShader, "model");
-	unsigned int normLoc = glGetUniformLocation(basicShader, "normal");
-	unsigned int hasNormalsLoc = glGetUniformLocation(basicShader, "hasNormals");
-	unsigned int hasTextureLoc = glGetUniformLocation(basicShader, "hasTexture");
-	unsigned int viewLoc = glGetUniformLocation(basicShader, "view");
-	unsigned int projLoc = glGetUniformLocation(basicShader, "proj");
-
-	// skybox shader uniforms
-	glUseProgram(skyboxShader);
-	unsigned int skyboxLoc = glGetUniformLocation(skyboxShader, "skybox");
-	unsigned int skyboxViewLoc = glGetUniformLocation(skyboxShader, "view");
-	unsigned int skyboxProjLoc = glGetUniformLocation(skyboxShader, "proj");
-	glUniform1f(skyboxLoc, 0);
-
-	// model, view, proj matrices
-	glm::mat4 model;
-	glm::mat4 view;
-	glm::mat4 proj;
-	glm::mat3 normal; // normal matrix instead of model matrix for normal vectors to keep the transformation linear
-
-	int windowWidth, windowHeight;
 	while (!glfwWindowShouldClose(window)) {
 		// Track realtime info
 		lastTime = currTime;
@@ -917,71 +1034,13 @@ int main(int argc, char** argv) {
 		// Handle input
 		processInput(window, deltaTime);
 
-		// Clear the screen buffer
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		// Render the global scene to the back buffer
+		renderScene(window);
 
-		// Build the projection matrix (depends on fov, aspect ratio, draw distance)
-		glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
-		proj = glm::perspective(radiansf(45.0f), (float)windowWidth / (float)windowHeight, 0.1f, 500.0f);
-
-		// Build the view matrix (depends on camera update)
-		glUseProgram(basicShader);
-		glm::vec3 camera_pos = glm::vec3(global_scene.camera.pos[0], global_scene.camera.pos[1], global_scene.camera.pos[2]);
-		view = glm::lookAt(
-			camera_pos, 
-			camera_pos + glm::vec3(global_scene.camera.front[0], global_scene.camera.front[1], global_scene.camera.front[2]), 
-			glm::vec3(global_scene.camera.up[0], global_scene.camera.up[1], global_scene.camera.up[2])
-		);
-		
-		// upload uniforms to shader
-		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(proj));
-		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-		glUniform3fv(lightPosLoc, 1, global_scene.lightSource.pos);
-		glUniform3fv(lightColorLoc, 1, global_scene.lightSource.color);
-		glUniform3fv(viewPos, 1, global_scene.camera.pos);
-
-		// Loop through the scene, build and upload the model matrix, then draw
-		for (int i = 0; i < global_scene.meshInstanceCount; i++) {
-			MeshInstance* meshInstance = global_scene.meshInstances[i];
-			if (meshInstance == nullptr || meshInstance->mesh == nullptr) continue;
-			Mesh* mesh = meshInstance->mesh;
-			// Bind the VAO (restores all attribute and buffer settings)
-			glBindVertexArray(mesh->VAO);
-
-			// Build model and normal matrix
-			model = glm::mat4(1.0f);
-			glm::mat4 translate = glm::translate(glm::mat4(1.0f), glm::vec3(meshInstance->pos[0], meshInstance->pos[1], meshInstance->pos[2]));
-			glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(meshInstance->scale[0], meshInstance->scale[1], meshInstance->scale[2]));
-			glm::mat4 rotate = glm::mat4_cast(glm::quat(meshInstance->rotation[0], meshInstance->rotation[1], meshInstance->rotation[2], meshInstance->rotation[3]));
-			model = translate * rotate * scale;
-			normal = glm::mat3(glm::transpose(glm::inverse(model)));
-
-			// upload uniforms to the shader
-			glUniform3fv(modelColorLoc, 1, meshInstance->color);
-			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-			glUniformMatrix3fv(normLoc, 1, GL_FALSE, glm::value_ptr(normal));
-			glUniform1i(hasNormalsLoc, mesh->has_normals);
-			glUniform1i(hasTextureLoc, 0);
-
-			// Issue a draw call
-			glUseProgram(basicShader);
-			glDrawElements(GL_TRIANGLES, mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
-		}
-		// draw skybox last
-		glDepthFunc(GL_LEQUAL);
-		glUseProgram(skyboxShader);
-		view = glm::mat4(glm::mat3(view));
-		glUniformMatrix4fv(skyboxViewLoc, 1, GL_FALSE, glm::value_ptr(view));
-		glUniformMatrix4fv(skyboxProjLoc, 1, GL_FALSE, glm::value_ptr(proj));
-		glBindVertexArray(global_scene.skybox.VAO);
-		glBindTexture(GL_TEXTURE_CUBE_MAP, global_scene.skybox.cubemapID);
-		glDrawArrays(GL_TRIANGLES, 0, 36);
-		glDepthFunc(GL_LESS);
-
-		// Unbind the active VAO
-		glBindVertexArray(0);
 		// Swap buffers
 		glfwSwapBuffers(window);
+
+		// Get new inputs
 		glfwPollEvents();
 		
 		// fps counter implementation
@@ -1000,7 +1059,8 @@ int main(int argc, char** argv) {
 		}
 	} // end main render loop
 
-	// free resources
+	// memory cleanup
+	free_scene(&global_scene);
 	free_resource_pool(&global_resource_pool);
 
     glfwDestroyWindow(window);
