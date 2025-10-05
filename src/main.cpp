@@ -17,10 +17,11 @@
 #include "gl_profile.hpp"
 #include "file_utils.hpp"
 
+#define G_ACCEL 9.8f
 
 // ===== GLOBAL VARS =====
-Scene global_scene;
 ResourcePool global_resource_pool;
+Scene global_scene;
 
 // ===== END GLOBAL VARS =====
 
@@ -568,6 +569,31 @@ void processInput(GLFWwindow* window, float deltaTime) {
 	}
 }
 
+// physics for now
+void updateScene(GLFWwindow* window, float deltaTime) {
+	// update position based on velocity vector
+	MeshInstance* active_instance;
+	for (int i = 0; i < global_scene.meshInstanceCount; i++) { 
+		active_instance = global_scene.meshInstances[i];
+		if (!active_instance->physics) continue;
+		active_instance->pos[0] += active_instance->velocity[0]*deltaTime;
+		active_instance->pos[1] += active_instance->velocity[1]*deltaTime;
+		active_instance->pos[2] += active_instance->velocity[2]*deltaTime;
+	}
+
+	// update velocity vector
+	for (int i = 0; i < global_scene.meshInstanceCount; i++) {
+		active_instance = global_scene.meshInstances[i];
+		if (active_instance->physics & 1) {
+			active_instance->velocity[1] -= G_ACCEL*deltaTime;
+		}
+		if (active_instance->physics & 2) {
+			// handle collision logic here
+			
+		}
+	}
+}
+
 void renderScene(GLFWwindow* window) {
 	// Clear the screen buffer
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -906,16 +932,39 @@ void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
 	set3f(meshInstance->color, 1.0f, 1.0f, 1.0f);
 	set3f(meshInstance->scale, 1.0f, 1.0f, 1.0f);
 	set4f(meshInstance->rotation, 1.0f, 0.0f, 0.0f, 0.0f);
+
+	//meshInstance->physics = 3;
 }
 
 // load initial scene (malloc mesh instances)
 void loadScene() {
-	const float spacing = 5;
-	for (int i = 0; i < global_resource_pool.meshCount; i++) {
-		MeshInstance* meshInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
-		setDefaultMeshInstance(meshInstance, i);
-		set3f(meshInstance->pos, i*spacing, 0.0f, 0.0f);
-		addMeshInstanceToGlobalScene(meshInstance);
+	// const float spacing = 5;
+	// for (int i = 0; i < global_resource_pool.meshCount; i++) {
+	// 	MeshInstance* meshInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
+	// 	setDefaultMeshInstance(meshInstance, i);
+	// 	set3f(meshInstance->pos, i*spacing, 0.0f, 0.0f);
+	// 	addMeshInstanceToGlobalScene(meshInstance);
+	// }
+
+	// floor
+	MeshInstance* floorInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
+	floorInstance->globalMeshId = 1;
+	set3f(floorInstance->pos, 0.0f, -20.0f, 0.0f);
+	set3f(floorInstance->color, 0.1f, 0.1f, 0.1f);
+	set3f(floorInstance->scale, 200.0f, 0.1f, 200.0f);
+	set4f(floorInstance->rotation, 1.0f, 0.0f, 0.0f, 0.0f);
+	floorInstance->physics = 2;
+	addMeshInstanceToGlobalScene(floorInstance);
+
+	// physics entities
+	int num_teapots = 1 << 5;
+	const float spacing = 10;
+	MeshInstance* instancePool = (MeshInstance*)malloc(sizeof(MeshInstance) * num_teapots);
+	for (int i = 0; i < num_teapots; i++) {
+		setDefaultMeshInstance(&instancePool[i], 0);
+		set3f(instancePool[i].pos, spacing*randf(), spacing*randf() + 50.0f, spacing*randf());
+		addMeshInstanceToGlobalScene(&instancePool[i]);
+		instancePool[i].physics = 3;
 	}
 
 	// light source
@@ -939,7 +988,7 @@ void loadScene() {
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	global_resource_pool.meshCount = 0;
 	global_resource_pool.textureCount = 0;
-	int num_meshes = 1; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
+	int num_meshes = 4; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
 		"resources/mesh/teapot.obj", // ending here
 		"resources/mesh/box.obj", 
@@ -1033,6 +1082,9 @@ int main(int argc, char** argv) {
 
 		// Handle input
 		processInput(window, deltaTime);
+
+		// TODO: separate systems?
+		updateScene(window, deltaTime);
 
 		// Render the global scene to the back buffer
 		renderScene(window);
