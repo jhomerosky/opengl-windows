@@ -1,8 +1,12 @@
 #ifndef __my_structs__
 
-#define __MAX_MESHES__ 2048
+// early design decision to statically allocate 
+#define __MAX_MESHES__ 64
 #define __MAX_MODELS__ 65536
-#define __MAX_TEXTURES__ 65536
+#define __MAX_TEXTURES__ 64
+#define __MAX_SHADERS__ 64
+
+//TODO: consider 
 
 // vertex object is a collection of 3d point in space, 3d normal vector, and 2d texture coord
 // more than just a point in space, it is an object that encodes the corner of a polygon
@@ -34,13 +38,20 @@ struct Mesh {
 };
 
 void init_mesh(Mesh* mesh) {
-	mesh->vertices = nullptr;
-	mesh->faces = nullptr;
+	if (mesh->vertices != nullptr) {
+		free(mesh->vertices);
+		mesh->vertices = nullptr;
+	}
+	if (mesh->faces != nullptr) {
+		free(mesh->faces);
+		mesh->faces = nullptr;
+	}
 	mesh->num_vertices = 0;
 	mesh->num_faces = 0;
 	mesh->has_normals = false;
 }
 
+// frees the mesh and mesh contents
 void free_mesh(Mesh* mesh) {
 	free(mesh->vertices);
 	free(mesh->faces);
@@ -48,9 +59,40 @@ void free_mesh(Mesh* mesh) {
 }
 
 // Texture is a resource containing metadata
+// @TODO: is this needed?
 struct Texture {
 	unsigned int textureID;
 };
+
+struct Shader {
+	unsigned int shaderID;
+
+	// @TODO?: hashmap : string (uniform name) -> int (loc)
+	// not going to be many uniforms, maybe 10-20 max. maybe it's faster to just O(n) lookup.
+	
+	// until (if) we implement hashmap, do a lookup on uniformNames, use index in uniformLoc
+	char** uniformNames;
+	unsigned int* uniformLoc;
+	int uniformCount;
+};
+
+void free_shader(Shader* shader) {
+	free(shader->uniformNames);
+	free(shader->uniformLoc);
+	shader->uniformCount = 0;
+}
+
+// @TODO: get rid of this if this is bad
+unsigned int get_shader_loc(const Shader* shader, const char* name) {
+	int index = -1;
+	for (int i = 0; i < shader->uniformCount; i++) {
+		if (strcmp(name, shader->uniformNames[i]) == 0) {
+			index = i;
+			break;
+		}
+	}
+	return index;
+}
 
 // Skybox is a cubemap loaded from 6 individual texture images
 struct Skybox {
@@ -63,8 +105,8 @@ struct Skybox {
 
 // MeshInstance is a world model which references a mesh and a texture
 struct MeshInstance {
-	Mesh* mesh; // todo: make this a ptr to mesh's ID with global pool?
-	Texture* texture;
+	unsigned int globalMeshId;
+	unsigned int globalTextureId;
 	float pos[3];
 	float scale[3];
 	float rotation[4]; // orientation as a quaternion rotation on (1, 0, 0, 0)
@@ -110,6 +152,16 @@ struct Scene {
 	MeshInstance* meshInstances[__MAX_MODELS__];
 	int meshInstanceCount;
 
+	// these are here so we can allocate memory once and reuse it in the render loop
+	// column major order because OpenGL uses it
+	float model[16];
+	float view[16];
+	float proj[16];
+	float normal[9]; // normal matrix instead of model matrix for normal vectors to keep the transformation linear
+
+	int windowWidth;
+	int windowHeight; 
+
 	Camera camera;
 	LightSource lightSource;
 	Skybox skybox;
@@ -129,6 +181,9 @@ struct ResourcePool {
 
 	Texture* textures[__MAX_TEXTURES__];
 	int textureCount;
+
+	Shader* shaders[__MAX_SHADERS__];
+	int shaderCount;
 	
 	// @TODO: add textures here? Or have 2 resourcePools?
 	// ResourcePool globalMeshPool;
@@ -145,6 +200,12 @@ struct ResourcePool {
 void free_resource_pool(ResourcePool* pool) {
 	for (int i = 0; i < pool->meshCount; i++) {
 		free_mesh(pool->meshes[i]);
+	}
+	for (int i = 0; i < pool->textureCount; i++) {
+		free(pool->textures[i]);
+	}
+	for (int i = 0; i < pool->shaderCount; i++) {
+		free_shader(pool->shaders[i]);
 	}
 }
 
