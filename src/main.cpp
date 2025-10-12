@@ -656,16 +656,20 @@ void renderScene(GLFWwindow* window) {
 		glBindVertexArray(mesh->VAO);
 
 		// Build model and normal matrix
+		//   Model = Translate * Rotate * Scale
+		//   Normal = mat3(Model^(-T))
 		// new implementation with no glm dependency
+		// We could order this cleverly to do everything in place with no temps, but I don't think the added complexity is worth it
 		float translate_temp[16];
 		float rotate_temp[16];
 		float scale_temp[16];
 		set_translate_mat(translate_temp, meshInstance->pos);
 		set_rotation_mat(rotate_temp, meshInstance->rotation);
 		set_scale_mat(scale_temp, meshInstance->scale);
+		set_normal_mat(global_scene.normal, rotate_temp, meshInstance->scale);
 		mat4_mul(global_scene.model, rotate_temp, scale_temp);
 		mat4_mul(global_scene.model, translate_temp, global_scene.model);
-		set_normal_mat(global_scene.normal, rotate_temp, meshInstance->scale);
+		
 
 		// upload uniforms to the shader
 		glUseProgram(basicShader);
