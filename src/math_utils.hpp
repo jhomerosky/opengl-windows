@@ -45,9 +45,9 @@ static inline int isNumber(const char *str) {
 
 static inline bool equals3f(const float v1[3], const float v2[3], const float eps) {
 	return (
-		abs(v1[0] - v2[0]) < eps &&
-		abs(v1[1] - v2[1]) < eps &&
-		abs(v1[2] - v2[2]) < eps
+		fabsf(v1[0] - v2[0]) < eps &&
+		fabsf(v1[1] - v2[1]) < eps &&
+		fabsf(v1[2] - v2[2]) < eps
 	);
 }
 
