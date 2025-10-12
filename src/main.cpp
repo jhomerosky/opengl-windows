@@ -571,6 +571,22 @@ void processInput(GLFWwindow* window, float deltaTime) {
 	}
 }
 
+// calculate deltaTime, FPS, etc
+void updateTime(Metrics* metrics) {
+	metrics->lastTime = metrics->currTime;
+	metrics->currTime = glfwGetTime();
+	metrics->deltaTime = metrics->currTime - metrics->lastTime;
+	metrics->heartBeat += metrics->deltaTime;
+
+	// fps counter implementation
+	metrics->frameCount = (metrics->frameCount + 1) % metrics->FRAMES_TO_COUNT;
+	if (!metrics->frameCount) {
+		metrics->fpsWindowTimeStart = metrics->fpsWindowTimeEnd;
+		metrics->fpsWindowTimeEnd = metrics->currTime;
+		metrics->fps = metrics->FRAMES_TO_COUNT / (metrics->fpsWindowTimeEnd - metrics->fpsWindowTimeStart);
+	}
+}
+
 // physics for now
 void updateScene(GLFWwindow* window, float deltaTime) {
 	// update position based on velocity vector
@@ -765,6 +781,14 @@ void initMouseInfo(MouseInfo& mouse) {
 	mouse.canModeSwitch = true;
 }
 
+// set default values; no malloc in here
+void initMetrics(Metrics* metrics) {
+	metrics->currTime = glfwGetTime();
+	metrics->heartBeat = 0.0f;
+	metrics->frameCount = 0;
+	metrics->FRAMES_TO_COUNT = 60;
+}
+
 // builds (no malloc) default mesh including VAO,VBO,EBO objects
 int initMesh(Mesh* mesh) {
 	// init values
@@ -835,6 +859,7 @@ void initShaders() {
 
 // Load skybox images from file, initialize GL cubemap object, define skybox vertices, initialize skybox VAO/VBO, upload vertices to GPU
 // TODO: Clean up; skybox loads from file can go to global pool; etc
+// TODO: jpg/png loading is too slow. ~100ms per file. Learn better formats for fast loading.
 void initSkybox() {
 	// TODO: move this to the global resource pool initialization?
 	const char* skyboxFiles[] = {
@@ -1051,33 +1076,22 @@ int main(int argc, char** argv) {
 	initShaders();
 	loadScene();
 
-	// vars for fps counter
-	// @TODO: wrap this?
-	float lastTime;
-	float currTime = glfwGetTime();
-	float deltaTime;
-	float fpsWindowTimeStart;
-	float fpsWindowTimeEnd = currTime;
-	float heartBeat = 0.0f;
-	unsigned int frameCount = 0;
-	int FRAMES_TO_COUNT = 60;
-	float fps;
-	char title[256];
+	Metrics metrics;
+	initMetrics(&metrics);
+
+	char title[256]; // window title
     const char* glVersion = (const char*)glGetString(GL_VERSION); // driver info
     const char* glRenderer = (const char*)glGetString(GL_RENDERER); // gpu info
 
 	while (!glfwWindowShouldClose(window)) {
-		// Track realtime info
-		lastTime = currTime;
-		currTime = glfwGetTime();
-		deltaTime = currTime - lastTime;
-		heartBeat += deltaTime;
+		// Update the time
+		updateTime(&metrics);
 
 		// Handle input
-		processInput(window, deltaTime);
+		processInput(window, metrics.deltaTime);
 
-		// TODO: separate systems?
-		updateScene(window, deltaTime);
+		// TODO: separate systems? i.e. updatePhysics(), updateAnim(), ...
+		updateScene(window, metrics.deltaTime);
 
 		// Render the global scene to the back buffer
 		renderScene(window);
@@ -1087,20 +1101,12 @@ int main(int argc, char** argv) {
 
 		// Get new inputs
 		glfwPollEvents();
-		
-		// fps counter implementation
-		frameCount = (frameCount + 1) % FRAMES_TO_COUNT;
-		if (!frameCount) {
-			fpsWindowTimeStart = fpsWindowTimeEnd;
-			fpsWindowTimeEnd = currTime;
-			fps = FRAMES_TO_COUNT / (fpsWindowTimeEnd - fpsWindowTimeStart);
-		}
  
-		// heartbeat implementation (this block runs every ~1 sec)
-		if (heartBeat > 1.0f) {
-			snprintf(title, sizeof(title), "GLFW OpenGL - [FPS: %.2f] - %s - %s", fps, glVersion, glRenderer);
+		// run this every ~1 second
+		if (metrics.heartBeat > 1.0f) {
+			snprintf(title, sizeof(title), "GLFW OpenGL - [FPS: %.2f] - %s - %s", metrics.fps, glVersion, glRenderer);
 			glfwSetWindowTitle(window, title);
-			heartBeat = 0.0f;
+			metrics.heartBeat = 0.0f;
 		}
 	} // end main render loop
 
