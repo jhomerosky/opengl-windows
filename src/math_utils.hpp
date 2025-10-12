@@ -18,6 +18,10 @@ static inline bool equals3f(const float v1[3], const float v2[3], const float ep
 static inline void mat4_mul(float out[16], const float A[16], const float B[16]);
 static inline void set_perspective_mat(float out[16], const float fovy, const float aspect, const float near, const float far);
 static inline void set_lookat_mat(float out[16], const float eye[3], const float front[3], const float up[3]);
+static inline void set_translate_mat(float out[16], const float pos[3]);
+static inline void set_rotation_mat(float out[16], const float quat[4]);
+static inline void set_scale_mat(float out[16], const float scale[3]);
+static inline void set_normal_mat(float out[9], const float rotate[16], const float scale[3]);
 // ===== end header =====
 
 // get a seed for the srand function
@@ -206,6 +210,85 @@ static inline void set_lookat_mat(float out[16], const float eye[3], const float
 	out[7]  = 0.0f;
 	out[11] = 0.0f;
 	out[15] = 1.0f;
+}
+
+// build the translate matrix
+static inline void set_translate_mat(float out[16], const float pos[3]) {
+	// setting column vectors
+	set4f(&out[0],    1.0f,   0.0f,   0.0f, 0.0f);
+	set4f(&out[4],    0.0f,   1.0f,   0.0f, 0.0f);
+	set4f(&out[8],    0.0f,   0.0f,   1.0f, 0.0f);
+	set4f(&out[12], pos[0], pos[1], pos[2], 1.0f);
+}
+
+// build the rotation matrix from a quaternion
+static inline void set_rotation_mat(float out[16], const float quat[4]) {
+	const float xx = quat[1]*quat[1];
+	const float yy = quat[2]*quat[2];
+	const float zz = quat[3]*quat[3];
+
+	const float xy = quat[1]*quat[2];
+	const float xz = quat[1]*quat[3];
+	const float yz = quat[2]*quat[3];
+	
+	const float wx = quat[0]*quat[1];
+	const float wy = quat[0]*quat[2];
+	const float wz = quat[0]*quat[3];
+
+	out[0]  = 1.0f - 2.0f*(yy + zz);
+	out[1]  =        2.0f*(xy + wz);
+	out[2]  =        2.0f*(xz - wy);
+	out[3]  = 0.0f;
+
+	out[4]  =        2.0f*(xy - wz);
+	out[5]  = 1.0f - 2.0f*(xx + zz);
+	out[6]  =        2.0f*(yz + wx);
+	out[7]  = 0.0f;
+
+	out[8]  =        2.0f*(xz + wy);
+	out[9]  =        2.0f*(yz - wx);
+	out[10] = 1.0f - 2.0f*(xx - yy);
+	out[11] = 0.0f;
+
+	out[12] = 0.0f;
+	out[13] = 0.0f;
+	out[14] = 0.0f;
+	out[15] = 1.0f;
+}
+
+// build the scale matrix
+static inline void set_scale_mat(float out[16], const float scale[3]) {
+	// setting column vectors
+	set4f(&out[0], scale[0],     0.0f,     0.0f,   0.0f);
+	set4f(&out[4],     0.0f, scale[1],     0.0f,   0.0f);
+	set4f(&out[8],     0.0f,     0.0f, scale[2],   0.0f);
+	set4f(&out[12],    0.0f,     0.0f,     0.0f,   1.0f);
+}
+
+// build the normal matrix from the model matrix.
+// NOTE: 
+//   Normal = mat3(Transpose(Inverse(Model))) = mat3(Transpose(Inverse(Translate*Rotate*Scale)))
+//   Translate can be ignored since normals are not affected by it:
+//       mat3((TRS)^(-T)) = mat3(T^(-T)(RS)^(-T)) = mat3(T^(-T))mat3((RS)^(-T)) where mat3(T^(-T)) = I
+//   Rotate is orthogonal -> inverse is equal to the transpose
+//   Scale is diagonal -> inverse is elementwise inverse down the diag; its transpose is identical; Mult is easy
+//       Model^(-T) = (Rotate*Scale)^(-T) = (Scale^(-1) * Rotate^(T))^T = Rotate * Scale^(-1)
+static inline void set_normal_mat(float out[9], const float rotate[16], const float scale[3]) {
+	float sxInv = 1/scale[0];
+	float syInv = 1/scale[1];
+	float szInv = 1/scale[2];
+
+	out[0] = rotate[0]*sxInv;
+	out[1] = rotate[1]*sxInv;
+	out[2] = rotate[2]*sxInv;
+
+	out[3] = rotate[4]*syInv;
+	out[4] = rotate[5]*syInv;
+	out[5] = rotate[6]*syInv;
+
+	out[6] = rotate[8]*szInv;
+	out[7] = rotate[9]*szInv;
+	out[8] = rotate[10]*szInv;
 }
 
 #define __my_math__
