@@ -87,6 +87,7 @@ static inline unsigned long long vertexHash(Vertex* vertex, const int decimalFil
 // @ASSUMING: vertices are deduplicated
 // compute each face's normal vector, add vnormal to each component vector, normalize all vectors
 int compute_vnormal_smooth(Mesh* mesh) {
+	printf("  computing vnormal smooth\n");
 	// @TODO: can we parallelize computing normals and do addition later?
 	for (int i = 0; i < mesh->num_faces; i++) {
 		float e1[3];
@@ -106,7 +107,7 @@ int compute_vnormal_smooth(Mesh* mesh) {
 		e2[2] = v2.pos[2] - v1.pos[2];
 
 		// cross product will not be near 0 because we are using edges of a triangle
-		cross3f_to_vec3(e1, e2, res);
+		cross3f(res, e1, e2);
 
 		// add this face's vnormal to each vertex in the face
 		mesh->vertices[mesh->faces[i].vertexId[0]].normal[0] += res[0];
@@ -183,7 +184,7 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	}
 
 	int dupe_count = mesh->num_vertices - vertex_index;
-	printf("duplicates dropped = %d\n", dupe_count);
+	printf("  duplicates dropped = %d\n", dupe_count);
 
 	// free the map's contents
 	for (int i = 0; i < map_size; i++) {
@@ -232,6 +233,7 @@ int realloc_mesh_with_face_vertices(Mesh* mesh) {
 // Compute vnormals for flat shading. Each vertex of a face uses the face's normal.
 // @Assuming: CCW face orientation, faces are triangles, vertex list is face-vertex
 int compute_vnormal_flat(Mesh* mesh) {
+	printf("  computing vnormal flat\n");
 	// for each face:
 	// e1 = v2 - v1, e2 = v3 - v2
 	// fnormal = normalize(cross(e1, e2))
@@ -257,7 +259,7 @@ int compute_vnormal_flat(Mesh* mesh) {
 		e2[2] = v2->pos[2] - v1->pos[2];
 
 		// cross product will not be near 0 because we are using edges of a triangle
-		cross3f_to_vec3(e1, e2, res);
+		cross3f(res, e1, e2);
 		normalize_in_place3f(res);
 
 		// write normal to vertex
@@ -511,7 +513,7 @@ void processInput(GLFWwindow* window, float deltaTime) {
 
 	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
 		float right[3];
-		cross3f_to_vec3(camera->up, camera->front, right);
+		cross3f(right, camera->up, camera->front);
 		normalize_in_place3f(right);
 		float factor = camera->speed * deltaTime;
 		for (int i = 0; i < 3; i++) camera->pos[i] += right[i] * factor;
@@ -528,7 +530,7 @@ void processInput(GLFWwindow* window, float deltaTime) {
 
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
 		float right[3];
-		cross3f_to_vec3(camera->up, camera->front, right);
+		cross3f(right, camera->up, camera->front);
 		normalize_in_place3f(right);
 		float factor = camera->speed * deltaTime;
 		for (int i = 0; i < 3; i++) camera->pos[i] -= right[i] * factor;
@@ -598,7 +600,8 @@ void renderScene(GLFWwindow* window) {
 	// Clear the screen buffer
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	// @TEMP: hardcoding the shader locations here for now, could cause a perf slowdown
+	// @TEMP: hardcoding the shader locations here for now
+	// this means we are doing that string lookup every frame when we shouldn't need to
 	unsigned int basicShader = global_resource_pool.shaders[0]->shaderID;
 	unsigned int skyboxShader = global_resource_pool.shaders[1]->shaderID;
 
@@ -611,34 +614,21 @@ void renderScene(GLFWwindow* window) {
 	unsigned int normLoc = glGetUniformLocation(basicShader, "normal");
 	unsigned int hasNormalsLoc = glGetUniformLocation(basicShader, "hasNormals");
 	unsigned int hasTextureLoc = glGetUniformLocation(basicShader, "hasTexture");
-	unsigned int viewLoc = glGetUniformLocation(basicShader, "view");
-	unsigned int projLoc = glGetUniformLocation(basicShader, "proj");
+	unsigned int projviewLoc = glGetUniformLocation(basicShader, "projview");
 
 	// skybox shader uniforms
 	unsigned int skyboxLoc = glGetUniformLocation(skyboxShader, "skybox");
-	unsigned int skyboxViewLoc = glGetUniformLocation(skyboxShader, "view");
-	unsigned int skyboxProjLoc = glGetUniformLocation(skyboxShader, "proj");
+	unsigned int skyboxProjViewLoc = glGetUniformLocation(skyboxShader, "projview");
 
-	// Build the projection matrix (depends on fov, aspect ratio, draw distance)
+	// precompute matrix: projview = proj*view
 	glfwGetFramebufferSize(window, &global_scene.windowWidth, &global_scene.windowHeight);
+	set_perspective_mat(global_scene.proj, radiansf(45.0f), (float)global_scene.windowWidth / (float)global_scene.windowHeight, 0.1f, 500.0f);
+	set_lookat_mat(global_scene.view, global_scene.camera.pos, global_scene.camera.front, global_scene.camera.up);
+	mat4_mul(global_scene.projview, global_scene.proj, global_scene.view); 
 
-	// TODO: remove glm dependency and just build the matrices myself, remove the memcpys
-	glm::mat4 proj_temp = glm::perspective(radiansf(45.0f), (float)global_scene.windowWidth / (float)global_scene.windowHeight, 0.1f, 500.0f);
-	memcpy(global_scene.proj, glm::value_ptr(proj_temp), sizeof(float)*16);
-
-	// Build the view matrix (depends on camera update)
-	glm::vec3 camera_pos = glm::vec3(global_scene.camera.pos[0], global_scene.camera.pos[1], global_scene.camera.pos[2]);
-	glm::mat4 view_temp = glm::lookAt(
-		camera_pos, 
-		camera_pos + glm::vec3(global_scene.camera.front[0], global_scene.camera.front[1], global_scene.camera.front[2]), 
-		glm::vec3(global_scene.camera.up[0], global_scene.camera.up[1], global_scene.camera.up[2])
-	);
-	memcpy(global_scene.view, glm::value_ptr(view_temp), sizeof(float)*16);
-	
 	// upload uniforms to shader
 	glUseProgram(basicShader);
-	glUniformMatrix4fv(projLoc, 1, GL_FALSE, global_scene.proj);
-	glUniformMatrix4fv(viewLoc, 1, GL_FALSE, global_scene.view);
+	glUniformMatrix4fv(projviewLoc, 1, GL_FALSE, global_scene.projview);
 	glUniform3fv(lightPosLoc, 1, global_scene.lightSource.pos);
 	glUniform3fv(lightColorLoc, 1, global_scene.lightSource.color);
 	glUniform3fv(viewPos, 1, global_scene.camera.pos);
@@ -658,9 +648,9 @@ void renderScene(GLFWwindow* window) {
 		glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(meshInstance->scale[0], meshInstance->scale[1], meshInstance->scale[2]));
 		glm::mat4 rotate = glm::mat4_cast(glm::quat(meshInstance->rotation[0], meshInstance->rotation[1], meshInstance->rotation[2], meshInstance->rotation[3]));
 		glm::mat4 model_temp = translate * rotate * scale;
-		memcpy(global_scene.model, glm::value_ptr(model_temp), sizeof(float)*16);
+		memcpy(global_scene.model, glm::value_ptr(model_temp), sizeof(global_scene.model)); // 4x4
 		glm::mat3 normal_temp = glm::mat3(glm::transpose(glm::inverse(model_temp)));
-		memcpy(global_scene.normal, glm::value_ptr(normal_temp), sizeof(float)*9);
+		memcpy(global_scene.normal, glm::value_ptr(normal_temp), sizeof(global_scene.normal)); // 3x3
 
 		// upload uniforms to the shader
 		glUseProgram(basicShader);
@@ -685,10 +675,11 @@ void renderScene(GLFWwindow* window) {
 	global_scene.view[14] = 0.0f;
 	global_scene.view[15] = 1.0f;
 
+	mat4_mul(global_scene.projview, global_scene.proj, global_scene.view);
+
 	glUseProgram(skyboxShader);
 	glUniform1f(skyboxLoc, 0);
-	glUniformMatrix4fv(skyboxViewLoc, 1, GL_FALSE, global_scene.view);
-	glUniformMatrix4fv(skyboxProjLoc, 1, GL_FALSE, global_scene.proj);
+	glUniformMatrix4fv(skyboxProjViewLoc, 1, GL_FALSE, global_scene.projview);
 	glBindVertexArray(global_scene.skybox.VAO);
 	glBindTexture(GL_TEXTURE_CUBE_MAP, global_scene.skybox.cubemapID);
 	glDrawArrays(GL_TRIANGLES, 0, 36);
@@ -988,10 +979,10 @@ void loadScene() {
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	global_resource_pool.meshCount = 0;
 	global_resource_pool.textureCount = 0;
-	int num_meshes = 4; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
+	int num_meshes = 2; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
-		"resources/mesh/teapot.obj", // ending here
-		"resources/mesh/box.obj", 
+		"resources/mesh/teapot.obj",
+		"resources/mesh/box.obj",  // ending here
 		"resources/mesh/teapot2.obj",
 		"resources/mesh/guy.obj", 
 		"resources/mesh/elf.obj", 
@@ -1009,15 +1000,17 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		// @TODO: write normals back to file?
 		if (!mesh->has_normals) {
 			printf("  Normals not found. Computing normals and rebuilding mesh.\n");
-			//realloc_mesh_with_face_vertices(mesh);
-			//compute_vnormal_flat(mesh);
-			const int tol = 5;
+			realloc_mesh_with_face_vertices(mesh);
 			tic();
-			deduplicate_mesh_vertices(mesh, tol);
-			printf("  TIME DEDUPLICATE VERTICES %s: %.6f ms\n", list_of_meshes[i], toc());
-			tic();
-			compute_vnormal_smooth(mesh);
+			compute_vnormal_flat(mesh);
 			printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", list_of_meshes[i], toc());
+			//const int tol = 5;
+			//tic();
+			//deduplicate_mesh_vertices(mesh, tol);
+			//printf("  TIME DEDUPLICATE VERTICES %s: %.6f ms\n", list_of_meshes[i], toc());
+			//tic();
+			//compute_vnormal_smooth(mesh);
+			//printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", list_of_meshes[i], toc());
 		}
 		printf("  v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
 		addMeshToGlobalPool(mesh);
@@ -1042,7 +1035,7 @@ int main(int argc, char** argv) {
 	if (!glfwInit()) { fprintf(stderr, "Failed to initialize GLFW\n"); return -1; } // glfw
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3); // OpenGL 3.x
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3); // OpenGL 3.3
-    GLFWwindow* window = glfwCreateWindow(800, 600, "GLFW OpenGL", NULL, NULL); // window
+    GLFWwindow* window = glfwCreateWindow(1280, 720, "GLFW OpenGL", NULL, NULL); // window
     if (!window) { fprintf(stderr, "Failed to create GLFW window\n"); glfwTerminate(); return -1; }
 	glfwMakeContextCurrent(window); // point opengl to this window
 	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) { fprintf(stderr, "Failed to initialize GLAD\n"); return -1; }
