@@ -219,5 +219,18 @@ void free_resource_pool(ResourcePool* pool) {
 	}
 }
 
+// wrapper for handling FPS metrics
+struct Metrics {
+	float lastTime;
+	float currTime;
+	float deltaTime;
+	float fpsWindowTimeStart;
+	float fpsWindowTimeEnd;
+	float heartBeat;
+	unsigned int frameCount;
+	int FRAMES_TO_COUNT;
+	float fps;
+};
+
 #define __my_structs__
 #endif
