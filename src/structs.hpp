@@ -6,8 +6,6 @@
 #define __MAX_TEXTURES__ 64
 #define __MAX_SHADERS__ 64
 
-//TODO: consider 
-
 // vertex object is a collection of 3d point in space, 3d normal vector, and 2d texture coord
 // more than just a point in space, it is an object that encodes the corner of a polygon
 struct Vertex {
@@ -59,7 +57,7 @@ void free_mesh(Mesh* mesh) {
 }
 
 // Texture is a resource containing metadata
-// @TODO: is this needed?
+// in the future it might have more data
 struct Texture {
 	unsigned int textureID;
 };
@@ -164,9 +162,11 @@ struct Scene {
 
 	// these are here so we can allocate memory once and reuse it in the render loop
 	// column major order because OpenGL uses it
+	// col major means mat[0:4] is col0, mat[4:8] is col1, mat[8:12] is col2, mat[12:16] is col3
 	float model[16];
 	float view[16];
 	float proj[16];
+	float projview[16]; // precompute for shader
 	float normal[9]; // normal matrix instead of model matrix for normal vectors to keep the transformation linear
 
 	int windowWidth;
@@ -218,6 +218,19 @@ void free_resource_pool(ResourcePool* pool) {
 		free_shader(pool->shaders[i]);
 	}
 }
+
+// wrapper for handling FPS metrics
+struct Metrics {
+	float lastTime;
+	float currTime;
+	float deltaTime;
+	float fpsWindowTimeStart;
+	float fpsWindowTimeEnd;
+	float heartBeat;
+	unsigned int frameCount;
+	int FRAMES_TO_COUNT;
+	float fps;
+};
 
 #define __my_structs__
 #endif
