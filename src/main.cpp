@@ -1059,6 +1059,25 @@ void initGlobalScene() {
 }
 // ===== END INIT FUNCTIONS =====
 
+
+// input: mesh
+// output: mesh representing the convex hull
+Mesh* buildConvexHull(Mesh* mesh) {
+	return nullptr;
+}
+
+// toy function for building convex hulls
+void executeConvexHulls() {
+	Mesh* hull;
+	for (int i = 0; i < global_resource_pool.meshCount; i++) {
+		hull = buildConvexHull(global_resource_pool.meshes[i]);
+		if (hull != nullptr) {
+			addMeshToGlobalPool(hull);
+		}
+	}
+}
+
+
 int main(int argc, char** argv) {
 	srand(getSeed());
 
@@ -1085,6 +1104,13 @@ int main(int argc, char** argv) {
 	initShaders();
 	loadScene();
 	// ========================= END SCENE SETUP =========================
+
+
+	// ================ Playground to test 3D algorithms before render loop ===================
+	executeConvexHulls();
+	// ================ end playground ================
+
+
 
 	Metrics metrics;
 	initMetrics(&metrics);
