@@ -112,18 +112,18 @@ static inline void set4f(float v[4], const float v0, const float v1, const float
 // mat4_mul(out, A, B) --> out = AB (safe for A=AB)
 static inline void mat4_mul(float out[16], const float A[16], const float B[16]) {
 	float temp[16];
-	temp[0]  = A[0]*B[0]  + A[4]*B[1]  + A[8]*B[2]  + A[12]*B[3];
-	temp[1]  = A[1]*B[0]  + A[5]*B[1]  + A[9]*B[2]  + A[13]*B[3];
-	temp[2]  = A[2]*B[0]  + A[6]*B[1]  + A[10]*B[2] + A[14]*B[3];
-	temp[3]  = A[3]*B[0]  + A[7]*B[1]  + A[11]*B[2] + A[15]*B[3];
+	temp[0]  = A[0]*B[0]  + A[4]*B[1]  + A[8]*B[2]   + A[12]*B[3];
+	temp[1]  = A[1]*B[0]  + A[5]*B[1]  + A[9]*B[2]   + A[13]*B[3];
+	temp[2]  = A[2]*B[0]  + A[6]*B[1]  + A[10]*B[2]  + A[14]*B[3];
+	temp[3]  = A[3]*B[0]  + A[7]*B[1]  + A[11]*B[2]  + A[15]*B[3];
 
-	temp[4]  = A[0]*B[4]  + A[4]*B[5]  + A[8]*B[6]  + A[12]*B[7];
-	temp[5]  = A[1]*B[4]  + A[5]*B[5]  + A[9]*B[6]  + A[13]*B[7];
-	temp[6]  = A[2]*B[4]  + A[6]*B[5]  + A[10]*B[6] + A[14]*B[7];
-	temp[7]  = A[3]*B[4]  + A[7]*B[5]  + A[11]*B[6] + A[15]*B[7];
+	temp[4]  = A[0]*B[4]  + A[4]*B[5]  + A[8]*B[6]   + A[12]*B[7];
+	temp[5]  = A[1]*B[4]  + A[5]*B[5]  + A[9]*B[6]   + A[13]*B[7];
+	temp[6]  = A[2]*B[4]  + A[6]*B[5]  + A[10]*B[6]  + A[14]*B[7];
+	temp[7]  = A[3]*B[4]  + A[7]*B[5]  + A[11]*B[6]  + A[15]*B[7];
 
-	temp[8]  = A[0]*B[8]  + A[4]*B[9]  + A[8]*B[10] + A[12]*B[11];
-	temp[9]  = A[1]*B[8]  + A[5]*B[9]  + A[9]*B[10] + A[13]*B[11];
+	temp[8]  = A[0]*B[8]  + A[4]*B[9]  + A[8]*B[10]  + A[12]*B[11];
+	temp[9]  = A[1]*B[8]  + A[5]*B[9]  + A[9]*B[10]  + A[13]*B[11];
 	temp[10] = A[2]*B[8]  + A[6]*B[9]  + A[10]*B[10] + A[14]*B[11];
 	temp[11] = A[3]*B[8]  + A[7]*B[9]  + A[11]*B[10] + A[15]*B[11];
 
@@ -131,7 +131,7 @@ static inline void mat4_mul(float out[16], const float A[16], const float B[16])
 	temp[13] = A[1]*B[12] + A[5]*B[13] + A[9]*B[14]  + A[13]*B[15];
 	temp[14] = A[2]*B[12] + A[6]*B[13] + A[10]*B[14] + A[14]*B[15];
 	temp[15] = A[3]*B[12] + A[7]*B[13] + A[11]*B[14] + A[15]*B[15];
-	for (int i = 0; i < 16; i++) out[i] = temp[i];
+	memcpy(out, temp, sizeof(float)*16);
 }
 
 // build perspective matrix, which is a type of projection matrix
@@ -271,8 +271,8 @@ static inline void set_scale_mat(float out[16], const float scale[3]) {
 //   Translate can be ignored since normals are not affected by it:
 //       mat3((TRS)^(-T)) = mat3(T^(-T)(RS)^(-T)) = mat3(T^(-T))mat3((RS)^(-T)) where mat3(T^(-T)) = I
 //   Rotate is orthogonal -> inverse is equal to the transpose
-//   Scale is diagonal -> inverse is elementwise inverse down the diag; its transpose is identical; Mult is easy
-//       Model^(-T) = (Rotate*Scale)^(-T) = (Scale^(-1) * Rotate^(T))^T = Rotate * Scale^(-1)
+//   Scale is diagonal -> inverse is easy; transpose is identical; mult is easy
+//       Model^(-T) = (Rotate*Scale)^(-T) = Rotate^(-T)Scale^(-T) = Rotate * Scale^(-1)
 static inline void set_normal_mat(float out[9], const float rotate[16], const float scale[3]) {
 	float sxInv = 1/scale[0];
 	float syInv = 1/scale[1];
