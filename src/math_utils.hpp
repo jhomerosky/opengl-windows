@@ -5,12 +5,14 @@
 unsigned int getSeed();
 float randf();
 static inline float radiansf(float degrees);
+static inline float degreesf(float radians);
 static inline int isNumber(const char *str);
 static inline void set3f(float v[3], const float v0, const float v1, const float v2);
 static inline void set4f(float v[4], const float v0, const float v1, const float v2, const float v3);
 static inline float maxf(float a, float b);
 static inline float dot3f(const float u[3], const float v[3]);
 static inline float dot4f(const float u[4], const float v[4]);
+static inline float fast_rsqrt(float number);
 static inline void quat_mult(float p[4], float q[4], float res[4]);
 static inline void cross3f(float out[3], const float v1[3], const float v2[3]);
 static inline void normalize_in_place3f(float v[3]);
@@ -92,9 +94,26 @@ static inline void quat_rotate_in_place(float orientation[4], float rotation[4])
 	quat_mult(rotation, temp, orientation);
 }
 
+// quake 3 fast inv sqrt
+// this is probably not optimal on modern hardware, but it's here for fun
+static inline float fast_rsqrt(float number) {
+    long i;
+    float x2, y;
+    const float threehalfs = 1.5F;
+
+    x2 = number * 0.5F;
+    y  = number;
+    i  = *(long*)&y;             // treat float bits as int
+    i  = 0x5f3759df - (i >> 1);  // magic
+    y  = *(float*)&i;
+    y  = y * (threehalfs - (x2 * y * y)); // 1 NR iteration
+    return y;
+}
+
 // does not check for 0 vector
 static inline void normalize_in_place3f(float v[3]) {
     float norm_factor = 1.0f / sqrtf(dot3f(v, v));
+	//float norm_factor = fast_rsqrt(dot3f(v,v));
     v[0] *= norm_factor;
     v[1] *= norm_factor;
     v[2] *= norm_factor;
@@ -105,6 +124,7 @@ static inline float maxf(float a, float b) {
 }
 
 static inline float radiansf(float degrees) { return degrees * 0.01745329251994329576923690768489f; }
+static inline float degreesf(float radians) { return radians * 57.295779513082320876798154814105f; }
 
 static inline void set3f(float v[3], const float v0, const float v1, const float v2) { v[0] = v0; v[1] = v1; v[2] = v2; }
 static inline void set4f(float v[4], const float v0, const float v1, const float v2, const float v3) { v[0] = v0; v[1] = v1; v[2] = v2; v[3] = v3; }
