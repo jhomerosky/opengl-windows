@@ -7,6 +7,8 @@ float randf();
 static inline float radiansf(float degrees);
 static inline float degreesf(float radians);
 static inline int isNumber(const char *str);
+static inline void set3u(unsigned int arr[3], const unsigned int n0, const unsigned int n1, const unsigned int n2);
+static inline void set3i(int arr[3], const int n0, const int n1, const int n2);
 static inline void set3f(float v[3], const float v0, const float v1, const float v2);
 static inline void set4f(float v[4], const float v0, const float v1, const float v2, const float v3);
 static inline float maxf(float a, float b);
@@ -14,6 +16,7 @@ static inline float dot3f(const float u[3], const float v[3]);
 static inline float dot4f(const float u[4], const float v[4]);
 static inline float fast_rsqrt(float number);
 static inline void quat_mult(float p[4], float q[4], float res[4]);
+static inline void sub3f(float out[3], const float v1[3], const float v2[3]);
 static inline void cross3f(float out[3], const float v1[3], const float v2[3]);
 static inline void normalize_in_place3f(float v[3]);
 static inline bool equals3f(const float v1[3], const float v2[3], const float eps);
@@ -53,6 +56,14 @@ static inline bool equals3f(const float v1[3], const float v2[3], const float ep
 	);
 }
 
+// out = v1 - v2; safe to use A = A - B
+static inline void sub3f(float out[3], const float v1[3], const float v2[3]) {
+	out[0] = v1[0] - v2[0];
+	out[1] = v1[1] - v2[1];
+	out[2] = v1[2] - v2[2];
+}
+
+// out = v1 cross v2; not safe for A = A cross B
 static inline void cross3f(float out[3], const float v1[3], const float v2[3]) {
     out[0] = v1[1] * v2[2] - v1[2] * v2[1];
     out[1] = v1[2] * v2[0] - v1[0] * v2[2];
@@ -126,6 +137,8 @@ static inline float maxf(float a, float b) {
 static inline float radiansf(float degrees) { return degrees * 0.01745329251994329576923690768489f; }
 static inline float degreesf(float radians) { return radians * 57.295779513082320876798154814105f; }
 
+static inline void set3u(unsigned int arr[3], const unsigned int n0, const unsigned int n1, const unsigned int n2) { arr[0] = n0; arr[1] = n1; arr[2] = n2; }
+static inline void set3i(int arr[3], const int n0, const int n1, const int n2) { arr[0] = n0; arr[1] = n1; arr[2] = n2; }
 static inline void set3f(float v[3], const float v0, const float v1, const float v2) { v[0] = v0; v[1] = v1; v[2] = v2; }
 static inline void set4f(float v[4], const float v0, const float v1, const float v2, const float v3) { v[0] = v0; v[1] = v1; v[2] = v2; v[3] = v3; }
 
