@@ -427,11 +427,11 @@ int addMeshInstanceToGlobalScene(MeshInstance* meshInstance) {
 	return global_scene.meshInstanceCount;
 }
 
-// register mesh
+// register mesh; returns Id of registered mesh
 int addMeshToGlobalPool(Mesh* mesh) {
 	if (global_resource_pool.meshCount != __MAX_MESHES__)
 		global_resource_pool.meshes[global_resource_pool.meshCount++] = mesh;
-	return global_resource_pool.meshCount;
+	return global_resource_pool.meshCount - 1;
 }
 
 // register texture
@@ -686,6 +686,58 @@ void renderScene(GLFWwindow* window) {
 		// Issue a draw call
 		glDrawElements(GL_TRIANGLES, mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
 	}
+
+	// if we want to show the hulls, then do a second pass for them
+	bool showHulls = true;
+	if (showHulls) {
+		//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // wireframe for hulls
+		for (int i = 0; i < global_scene.meshInstanceCount; i++) {
+			// error checking
+			MeshInstance* meshInstance = global_scene.meshInstances[i];
+			if (meshInstance == nullptr || meshInstance->globalMeshId < 0) continue;
+			Mesh* mesh = global_resource_pool.meshes[meshInstance->globalMeshId];
+			if (!mesh->has_convex_hull) { printf("missing convex hull for mesh %d\n", meshInstance->globalMeshId); continue; } // mesh does not have a hull
+			if (!mesh->hullId == -1) { printf("meshInstance[%d] is directly referencing a hull!\n", i); continue; } // somehow a meshInstance is directly using a hull as it's mesh
+			
+			// get hull
+			Mesh* hull = global_resource_pool.meshes[mesh->hullId];
+			if (hull->hullId != -1) { printf("mesh->hullId (%d) is not a hull!\n", mesh->hullId); continue; } // the hull mesh is not a hull
+
+			// Bind the VAO (restores all attribute and buffer settings)
+			glBindVertexArray(hull->VAO);
+
+			// Build model and normal matrix
+			//   Model = Translate * Rotate * Scale
+			//   Normal = mat3(Model^(-T))
+			// new implementation with no glm dependency
+			// NOTE: We could order this cleverly to do everything in place with no temps, but I don't think the added complexity is worth it
+			float translate_temp[16];
+			float rotate_temp[16];
+			float scale_temp[16];
+			set_translate_mat(translate_temp, meshInstance->pos);
+			set_rotation_mat(rotate_temp, meshInstance->rotation);
+			set_scale_mat(scale_temp, meshInstance->scale);
+			set_normal_mat(global_scene.normal, rotate_temp, meshInstance->scale);
+			mat4_mul(global_scene.model, rotate_temp, scale_temp);
+			mat4_mul(global_scene.model, translate_temp, global_scene.model);
+			
+			// upload uniforms to the shader
+			glUseProgram(basicShader);
+			glUniform3fv(modelColorLoc, 1, meshInstance->hullColor);
+			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, global_scene.model);
+			glUniformMatrix3fv(normLoc, 1, GL_FALSE, global_scene.normal);
+			glUniform1i(hasNormalsLoc, 0);
+			glUniform1i(hasTextureLoc, 0);
+
+			// @TODO: something is breaking when drawing. faces change on execution.
+			//    probably mismanaging memory, maybe related to the faces
+			// Issue a draw call
+			glDrawElements(GL_TRIANGLES, hull->num_faces * 3, GL_UNSIGNED_INT, 0);
+		}
+		//glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+	}
+
+
 	// draw skybox last
 	glDepthFunc(GL_LEQUAL);
 
@@ -760,7 +812,7 @@ void initOpenGL() {
 
 
 	glfwSwapInterval(1); // 0: disable vsync | 1: enable vsync
-	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // wireframe mode
+	glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // wireframe mode
 }
 
 // default values for camera
@@ -812,6 +864,9 @@ int initMesh(Mesh* mesh) {
 	mesh->num_vertices = 0;
 	mesh->num_faces = 0;
 	mesh->has_normals = false;
+
+	mesh->has_convex_hull = false;
+	mesh->hullId = 0;
 
 	// Build VAO, VBO, EBOs for each mesh in the scene
 	// Vertex Attribute Object (VAO): tracks buffers and attribute locations within buffers
@@ -978,6 +1033,8 @@ void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
 	set3f(meshInstance->color, 1.0f, 1.0f, 1.0f);
 	set3f(meshInstance->scale, 1.0f, 1.0f, 1.0f);
 	set4f(meshInstance->rotation, 1.0f, 0.0f, 0.0f, 0.0f);
+	
+	set3f(meshInstance->hullColor, 1.0f, 0.5f, 0.0f);
 
 	//meshInstance->physics = 3;
 }
@@ -1097,6 +1154,7 @@ void initGlobalScene() {
 
 // input: mesh
 // output: mesh representing the convex hull
+// quickhull algorithm
 Mesh* makeConvexHull(Mesh* mesh) {
 	// smaller vertex for algorithm
 	struct Point {
@@ -1167,12 +1225,12 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// list of points used in convex hull, overallocating for now
 	size_t pointListSize = 0;
 	size_t pointListCap = pointListIndex;
-	Point* pointList = (Point*)malloc(sizeof(Point) * pointListCap);
+	Point* pointListOutput = (Point*)malloc(sizeof(Point) * pointListCap);
 
 	// list of facets used in convex hull, size may exceed cap and trigger realloc
 	size_t facetListSize = 0;
 	size_t facetListCap = mesh->num_faces;
-	Facet* facetList = (Facet*)malloc(sizeof(Facet) * facetListCap);
+	Facet* facetListOutput = (Facet*)malloc(sizeof(Facet) * facetListCap);
 
 	// initial phase, pick 4 extreme points
 	Point* minX = &(pointListInput[0]);
@@ -1202,42 +1260,84 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	printf("minZ = %.5f %.5f %.5f\n", minZ->pos[0], minZ->pos[1], minZ->pos[2]);
 	printf("maxZ = %.5f %.5f %.5f\n", maxZ->pos[0], maxZ->pos[1], maxZ->pos[2]);
 
-	// step 1, take any 4 of these: min/max of 1 dim, then p3 maximizes area of triangle, then p4 is farthest perpendicular distance
+	// initial simplex:
+	// p1, p2 are min/max of one dim of above
+	// p3 is argmax distance from p1p2 segment
+	// p4 is argmax distance from plane
+
+	// step 1: take min/max along X
 	// for now just taking 4 at random
-	pointList[pointListSize++] = *minX;
-	pointList[pointListSize++] = *maxX;
-	pointList[pointListSize++] = *maxY;
-	pointList[pointListSize++] = *maxZ;
+	pointListOutput[pointListSize++] = *minX;
+	pointListOutput[pointListSize++] = *maxX;
+
+	// step 2: find point farthest in perpendicular distance from segment
+	Point* p = &(pointListInput[0]);
+	float maxDist = 0;
+	float newSegment[3]; // p - minX
+	float segment[3]; // maxX - minX
+	float temp[3];
+	float distance;
+	for (int i = 1; i < pointListIndex; i++) {
+		sub3f(newSegment, pointListInput[i].pos, minX->pos);
+		sub3f(segment, maxX->pos, minX->pos);
+		cross3f(temp, newSegment, segment);
+		distance = sqrtf(dot3f(temp, temp)) / sqrtf(dot3f(segment, segment));
+		if (distance > maxDist) {
+			p = &pointListInput[i];
+			maxDist = distance;
+		}
+	}
+	printf("P3 = %.5f %.5f %.5f with distance=%.5f\n", p->pos[0], p->pos[1], p->pos[2], distance);
+	pointListOutput[pointListSize++] = *p;
+
+	// step 3: find point farthest in perpendicular distance from normal
+	sub3f(newSegment, p->pos, minX->pos);
+	sub3f(segment, maxX->pos, minX->pos);
+	cross3f(temp, newSegment, segment);
+	normalize_in_place3f(temp); // this is a normal vector to the p1p2p3 triangle
+	p = &(pointListInput[0]);
+	maxDist = 0;
+	distance = 0;
+	for (int i = 0; i < pointListIndex; i++) {
+		sub3f(newSegment, pointListInput[i].pos, minX->pos);
+		distance = fabsf(dot3f(newSegment, temp));
+		if (distance > maxDist) {
+			p = &pointListInput[i];
+			maxDist = distance;
+		}
+	}
+	printf("P4 = %.5f %.5f %.5f with distance=%.5f\n", p->pos[0], p->pos[1], p->pos[2], distance);
+	pointListOutput[pointListSize++] = *p;
 
 	// set initial faces for tetrahedron
-	facetList[facetListSize].points[0] = 0;
-	facetList[facetListSize].points[1] = 1;
-	facetList[facetListSize].points[2] = 2;
+	set3u(facetListOutput[facetListSize].points, 0, 1, 2);
+	facetListOutput[facetListSize].active = true;
 	facetListSize++;
-	facetList[facetListSize].points[0] = 0;
-	facetList[facetListSize].points[1] = 1;
-	facetList[facetListSize].points[2] = 3;
+
+	set3u(facetListOutput[facetListSize].points, 0, 1, 3);
+	facetListOutput[facetListSize].active = true;
 	facetListSize++;
-	facetList[facetListSize].points[0] = 0;
-	facetList[facetListSize].points[1] = 2;
-	facetList[facetListSize].points[2] = 3;
+
+	set3u(facetListOutput[facetListSize].points, 0, 2, 3);
+	facetListOutput[facetListSize].active = true;
 	facetListSize++;
-	facetList[facetListSize].points[0] = 1;
-	facetList[facetListSize].points[1] = 2;
-	facetList[facetListSize].points[2] = 3;
+
+	set3u(facetListOutput[facetListSize].points, 1, 2, 3);
+	facetListOutput[facetListSize].active = true;
 	facetListSize++;
 
 	// now the convex hull is created, we stuff this in a mesh
 	Mesh* convexHull = (Mesh*)malloc(sizeof(Mesh));
 	initMesh(convexHull);
+	convexHull->hullId = -1;
 
 	// set mesh vertices
 	convexHull->vertices = (Vertex*)malloc(sizeof(Vertex)*pointListSize);
 	convexHull->num_vertices = pointListSize;
 	for (int i = 0; i < pointListSize; i++) {
-		convexHull->vertices[i].pos[0] = pointList[i].pos[0];
-		convexHull->vertices[i].pos[1] = pointList[i].pos[1];
-		convexHull->vertices[i].pos[2] = pointList[i].pos[2];
+		convexHull->vertices[i].pos[0] = pointListOutput[i].pos[0];
+		convexHull->vertices[i].pos[1] = pointListOutput[i].pos[1];
+		convexHull->vertices[i].pos[2] = pointListOutput[i].pos[2];
 	}
 
 	// set mesh faces
@@ -1248,33 +1348,48 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	convexHull->has_normals = false;
 	size_t faceIndex = 0;
 	for (int i = 0; i < facetListSize; i++) {
-		if (facetList[i].active) {
-			convexHull->faces[faceIndex].vertexId[0] = facetList[i].points[0];
-			convexHull->faces[faceIndex].vertexId[1] = facetList[i].points[1];
-			convexHull->faces[faceIndex].vertexId[2] = facetList[i].points[2];
+		if (facetListOutput[i].active) {
+			convexHull->faces[faceIndex].vertexId[0] = facetListOutput[i].points[0];
+			convexHull->faces[faceIndex].vertexId[1] = facetListOutput[i].points[1];
+			convexHull->faces[faceIndex].vertexId[2] = facetListOutput[i].points[2];
 			faceIndex++;
 		}
+		// @TODO: check if we grew too large
 	}
 	convexHull->faces = (Face*)realloc(convexHull->faces, sizeof(Face)*faceIndex);
 
 	free(pointListInput);
-	free(pointList);
-	free(facetList);
-	return nullptr;
+	free(pointListOutput);
+	free(facetListOutput);
+	return convexHull;
 }
 
-// toy function for building convex hulls
+// wrapper function for building convex hulls and adding to scene
 void executeConvexHulls() {
 	Mesh* hull;
-	for (int i = 0; i < global_resource_pool.meshCount; i++) {
+	const int meshCountBeforeHulls = global_resource_pool.meshCount;
+	unsigned int hullId;
+	for (int i = 0; i < meshCountBeforeHulls; i++) {
 		printf(">> building convex hull:\n");
 		tic();
 		hull = makeConvexHull(global_resource_pool.meshes[i]);
 		printf(">> convex hull in %.6f ms\n", toc());
 		if (hull != nullptr) {
-			addMeshToGlobalPool(hull);
+			hullId = addMeshToGlobalPool(hull);
+			global_resource_pool.meshes[i]->hullId = hullId;
+			global_resource_pool.meshes[i]->has_convex_hull = true;
+			uploadMeshBuffers(hull);
+		} else {
+			printf("makeConvexHull(meshes[%d]) returned nullptr\n", i);
 		}
 	}
+	printf("global_resource_pool looks like:\n");
+	printf(">> size = %d\n", global_resource_pool.meshCount);
+	for (int i = 0; i < global_resource_pool.meshCount; i++) {
+		printf(">> meshes[%d] has_convex_hull: %d\n", i, global_resource_pool.meshes[i]->has_convex_hull);
+		printf(">> meshes[%d] hullId: %d\n", i, global_resource_pool.meshes[i]->hullId);
+	}
+	printf("exiting executeConvexHulls()\n");
 }
 
 

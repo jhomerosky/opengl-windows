@@ -24,30 +24,17 @@ struct Face {
 struct Mesh {
 	Vertex* vertices;
 	Face* faces;
-
 	size_t num_vertices;
 	size_t num_faces;
-
 	bool has_normals;
+
+	bool has_convex_hull;
+	int hullId; // -1 if we are a hull, otherwise point into global mesh pool
 
 	unsigned int VAO;
 	unsigned int VBO;
 	unsigned int EBO;
 };
-
-void init_mesh(Mesh* mesh) {
-	if (mesh->vertices != nullptr) {
-		free(mesh->vertices);
-		mesh->vertices = nullptr;
-	}
-	if (mesh->faces != nullptr) {
-		free(mesh->faces);
-		mesh->faces = nullptr;
-	}
-	mesh->num_vertices = 0;
-	mesh->num_faces = 0;
-	mesh->has_normals = false;
-}
 
 // frees the mesh and mesh contents
 void free_mesh(Mesh* mesh) {
@@ -111,6 +98,10 @@ struct MeshInstance {
 	float rotation[4]; // orientation as a quaternion rotation on (1, 0, 0, 0)
 	float color[3];
 
+	// convex hull
+	float hullColor[3];
+
+	// physics
 	float velocity[3];
 	
 	// bitfield
@@ -118,7 +109,6 @@ struct MeshInstance {
 	// physics & 1 = is_falling
 	// physics & 2 = is_collidable
 	unsigned int physics;
-
 };
 
 // Camera encodes the view
