@@ -18,7 +18,6 @@
 // ===== GLOBAL VARS =====
 ResourcePool global_resource_pool;
 Scene global_scene;
-
 // ===== END GLOBAL VARS =====
 
 // ===== CALLBACK FUNCTIONS =====
@@ -57,7 +56,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 	camera->front[0] = cosf(radiansf(camera->yaw)) * cosf(radiansf(camera->pitch));
 	camera->front[1] = sinf(radiansf(camera->pitch));
 	camera->front[2] = sinf(radiansf(camera->yaw)) * cosf(radiansf(camera->pitch));
-	normalize_in_place3f(camera->front);
+	normalize3f_inplace(camera->front);
 }
 // ===== END CALLBACK FUNCTIONS =====
 
@@ -65,7 +64,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 
 // hashing strategy: hash = x * prime1 ^ y * prime2 ^ z * prime3
 // (x,y,z) = (int)((x,y,z) * 1e5)
-static inline unsigned long long float3Hash(const float pos[3], const int decimalFilter) {
+static inline unsigned long long float3Hash(const float in[3], const int decimalFilter) {
 
 	// 1.1234567 * 1e5 = 112345.67 --> 112345
 	// 1.1234587 * 1e5 = 112345.87 --> 112345
@@ -73,9 +72,9 @@ static inline unsigned long long float3Hash(const float pos[3], const int decima
 	const long long primes[3] = {19349669, 83492791, 73856093};
 	//const int primes[3] = {113, 569, 877};
 	const long long vecints[3] = {
-		(long long)(pos[0] * decimalFilter),
-		(long long)(pos[1] * decimalFilter),
-		(long long)(pos[2] * decimalFilter)
+		(long long)(in[0] * decimalFilter),
+		(long long)(in[1] * decimalFilter),
+		(long long)(in[2] * decimalFilter)
 	};
 	return (primes[0] * vecints[0]) ^ (primes[1] * vecints[1]) ^ (primes[2] * vecints[2]);
 }
@@ -90,39 +89,28 @@ int compute_vnormal_smooth(Mesh* mesh) {
 		float e2[3];
 		float res[3];
 		// vertices
-		const Vertex v0 = mesh->vertices[mesh->faces[i].vertexId[0]];
-		const Vertex v1 = mesh->vertices[mesh->faces[i].vertexId[1]];
-		const Vertex v2 = mesh->vertices[mesh->faces[i].vertexId[2]];
-		// e1
-		e1[0] = v1.pos[0] - v0.pos[0];
-		e1[1] = v1.pos[1] - v0.pos[1];
-		e1[2] = v1.pos[2] - v0.pos[2];
-		// e2
-		e2[0] = v2.pos[0] - v1.pos[0];
-		e2[1] = v2.pos[1] - v1.pos[1];
-		e2[2] = v2.pos[2] - v1.pos[2];
+		Vertex *v0 = &(mesh->vertices[mesh->faces[i].vertexId[0]]);
+		Vertex *v1 = &(mesh->vertices[mesh->faces[i].vertexId[1]]);
+		Vertex *v2 = &(mesh->vertices[mesh->faces[i].vertexId[2]]);
+		
+		// edges of triangle
+		sub3f(e1, v1->pos, v0->pos);
+		sub3f(e2, v2->pos, v1->pos);
 
-		// cross product will not be near 0 because we are using edges of a triangle
+		// get normal of triangle
 		cross3f(res, e1, e2);
 
 		// add this face's vnormal to each vertex in the face
-		mesh->vertices[mesh->faces[i].vertexId[0]].normal[0] += res[0];
-		mesh->vertices[mesh->faces[i].vertexId[0]].normal[1] += res[1];
-		mesh->vertices[mesh->faces[i].vertexId[0]].normal[2] += res[2];
-
-		mesh->vertices[mesh->faces[i].vertexId[1]].normal[0] += res[0];
-		mesh->vertices[mesh->faces[i].vertexId[1]].normal[1] += res[1];
-		mesh->vertices[mesh->faces[i].vertexId[1]].normal[2] += res[2];
-
-		mesh->vertices[mesh->faces[i].vertexId[2]].normal[0] += res[0];
-		mesh->vertices[mesh->faces[i].vertexId[2]].normal[1] += res[1];
-		mesh->vertices[mesh->faces[i].vertexId[2]].normal[2] += res[2];
+		// these should all face relatively same direction so we don't norm a 0 vector
+		add3f(v0->normal, v0->normal, res);
+		add3f(v1->normal, v1->normal, res);
+		add3f(v2->normal, v2->normal, res);
 	}
 	// normalize every vertex's vnormal;
 	// @NOTE: Benchmark shows omp threads speeds this up but simd does not
 	#pragma omp parallel for
 	for (int i = 0; i < mesh->num_vertices; i++) {
-		normalize_in_place3f(mesh->vertices[i].normal);
+		normalize3f_inplace(mesh->vertices[i].normal);
 	}
 	mesh->has_normals = true;
 	return 0;
@@ -147,7 +135,7 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	size_t map_size = mesh->num_faces/2;
 	HashNode** map = (HashNode**)calloc(map_size, sizeof(HashNode*));
 	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces); // upper bound size, resize later
-	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in deduplicate_mesh_vertices\n"); return -1; }
+	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in deduplicate_mesh_vertices\n"); free(map); return -1; }
 	unsigned int vertex_index = 0;
 
 	for (int i = 0; i < mesh->num_faces; i++) {
@@ -172,9 +160,7 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 			if (!found) {
 				*ptr = (HashNode*)calloc(1, sizeof(HashNode));
 				(*ptr)->data = vertex_index++;
-				new_vertex_list[(*ptr)->data].pos[0] = v->pos[0];
-				new_vertex_list[(*ptr)->data].pos[1] = v->pos[1];
-				new_vertex_list[(*ptr)->data].pos[2] = v->pos[2];
+				set3fv(new_vertex_list[(*ptr)->data].pos, v->pos);
 			}
 			temp->vertexId[j] = (*ptr)->data;
 		}
@@ -207,11 +193,12 @@ int realloc_mesh_with_face_vertices(Mesh* mesh) {
 	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces);
 	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in realloc_mesh_with_face_vertices\n"); return -1; }
 
+	printf("before omp parallel for in realloc_mesh_with_face_vertices\n");
 	// NOTE: benchmark demonstrated >2x speedup multithreading speedup
 	#pragma omp parallel for
 	for (int i = 0; i < mesh->num_faces; i++) {
 		// add to new list; note no overlap between threads
-		new_vertex_list[i*3] = mesh->vertices[mesh->faces[i].vertexId[0]];
+		new_vertex_list[i*3]     = mesh->vertices[mesh->faces[i].vertexId[0]];
 		new_vertex_list[i*3 + 1] = mesh->vertices[mesh->faces[i].vertexId[1]];
 		new_vertex_list[i*3 + 2] = mesh->vertices[mesh->faces[i].vertexId[2]];
 
@@ -220,6 +207,7 @@ int realloc_mesh_with_face_vertices(Mesh* mesh) {
 		mesh->faces[i].vertexId[1] = i*3 + 1;
 		mesh->faces[i].vertexId[2] = i*3 + 2;
 	}
+	printf("after omp parallel for in realloc_mesh_with_face_vertices\n");
 	free(mesh->vertices);
 	mesh->vertices = new_vertex_list;
 	mesh->num_vertices = 3 * mesh->num_faces;
@@ -246,23 +234,19 @@ int compute_vnormal_flat(Mesh* mesh) {
 		Vertex *v0 = &mesh->vertices[mesh->faces[i].vertexId[0]];
 		Vertex *v1 = &mesh->vertices[mesh->faces[i].vertexId[1]];
 		Vertex *v2 = &mesh->vertices[mesh->faces[i].vertexId[2]];
-		// e1
-		e1[0] = v1->pos[0] - v0->pos[0];
-		e1[1] = v1->pos[1] - v0->pos[1];
-		e1[2] = v1->pos[2] - v0->pos[2];
-		// e2
-		e2[0] = v2->pos[0] - v1->pos[0];
-		e2[1] = v2->pos[1] - v1->pos[1];
-		e2[2] = v2->pos[2] - v1->pos[2];
 
-		// cross product will not be near 0 because we are using edges of a triangle
+		// edges of triangle
+		sub3f(e1, v1->pos, v0->pos);
+		sub3f(e2, v2->pos, v1->pos);
+
+		// cross product will not be near 0 if triangle is not degenerate
 		cross3f(res, e1, e2);
-		normalize_in_place3f(res);
+		normalize3f_inplace(res);
 
 		// write normal to vertex
-		set3f(v0->normal, res[0], res[1], res[2]);
-		set3f(v1->normal, res[0], res[1], res[2]);
-		set3f(v2->normal, res[0], res[1], res[2]);
+		set3fv(v0->normal, res);
+		set3fv(v1->normal, res);
+		set3fv(v2->normal, res);
 	}
 	mesh->has_normals = true;
 
@@ -295,7 +279,11 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	// counts items in file
 	char buf[512];
 	FILE* file = fopen(filename, "r");
-	while (fgets(buf, 2048, file) != NULL) {
+	if (file == NULL) { 
+		printf("FILE %s is NULL in malloc_mesh_fields_from_obj_file\n", filename);
+		return 0;
+	}
+	while (fgets(buf, sizeof(buf), file) != NULL) {
 		if (buf[0] == 'v' && buf[1] == ' ') ++num_vertices;
 		if (buf[0] == 'v' && buf[1] == 't') {
 			++num_uv_coords;
@@ -313,8 +301,9 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 				if (*p == ' ' && *(p+1) >= '0' && *(p+1) <= '9')
 					count++;
 			}
-			if (count == 4) 
+			if (count == 4) {
 				num_faces++;
+			}
 			num_faces++;
 		}
 	}
@@ -325,10 +314,10 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	mesh->faces = (Face*)malloc(sizeof(Face)*num_faces);
 	
 	// load items onto memory
-	while (fgets(buf, 512, file) != NULL) {
+	while (fgets(buf, sizeof(buf), file) != NULL) {
 		if (buf[0] == 'v' && buf[1] == ' ') {
 			if (sscanf(buf, "v %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
-				set3f(mesh->vertices[v_index].pos, pos[0], pos[1], pos[2]);
+				set3fv(mesh->vertices[v_index].pos, pos);
 				++v_index;
 			}
 		}
@@ -341,7 +330,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 		}
 		if (vnormals_enabled && buf[0] == 'v' && buf[1] == 'n') {
 			if (sscanf(buf, "vn %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
-				set3f(mesh->vertices[vn_index].normal, pos[0], pos[1], pos[2]);
+				set3fv(mesh->vertices[vn_index].normal, pos);
 				++vn_index;
 			}
 		}
@@ -407,8 +396,8 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 		} else {
 			printf("  normals disabled\n");
 		}
-
-		
+		free(mesh->vertices);
+		free(mesh->faces);
 		return 0;
 	}
 
@@ -493,10 +482,11 @@ void rotateCamera(GLFWwindow* window, float yaw, float pitch) {
 	camera->front[0] = cosf(radiansf(camera->yaw)) * cosf(radiansf(camera->pitch));
 	camera->front[1] = sinf(radiansf(camera->pitch));
 	camera->front[2] = sinf(radiansf(camera->yaw)) * cosf(radiansf(camera->pitch));
-	normalize_in_place3f(camera->front);
+	normalize3f_inplace(camera->front);
 }
 
 // trigger events based on inputs
+// @TODO: probably set flags here and process input events from mapping flags -> actions ? 
 void processInput(GLFWwindow* window, float deltaTime) {
 	Camera *camera = &(global_scene.camera);
 	MouseInfo *mouse = &(global_scene.mouse);
@@ -505,15 +495,19 @@ void processInput(GLFWwindow* window, float deltaTime) {
 
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
 		float factor = camera->speed * deltaTime;
-		for (int i = 0; i < 3; i++)camera->pos[i] += camera->front[i] * factor;
+		camera->pos[0] += camera->front[0] * factor;
+		camera->pos[1] += camera->front[1] * factor;
+		camera->pos[2] += camera->front[2] * factor;
 	}
 
 	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
 		float right[3];
 		cross3f(right, camera->up, camera->front);
-		normalize_in_place3f(right);
+		normalize3f_inplace(right);
 		float factor = camera->speed * deltaTime;
-		for (int i = 0; i < 3; i++) camera->pos[i] += right[i] * factor;
+		camera->pos[0] += right[0] * factor;
+		camera->pos[1] += right[1] * factor;
+		camera->pos[2] += right[2] * factor;
 	}
 
 	if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
@@ -522,15 +516,19 @@ void processInput(GLFWwindow* window, float deltaTime) {
 
 	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
 		float factor = camera->speed * deltaTime;
-		for (int i = 0; i < 3; i++) camera->pos[i] -= camera->front[i] * factor;
+		camera->pos[0] -= camera->front[0] * factor;
+		camera->pos[1] -= camera->front[1] * factor;
+		camera->pos[2] -= camera->front[2] * factor;
 	}
 
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
 		float right[3];
 		cross3f(right, camera->up, camera->front);
-		normalize_in_place3f(right);
+		normalize3f_inplace(right);
 		float factor = camera->speed * deltaTime;
-		for (int i = 0; i < 3; i++) camera->pos[i] -= right[i] * factor;
+		camera->pos[0] -= right[0] * factor;
+		camera->pos[1] -= right[1] * factor;
+		camera->pos[2] -= right[2] * factor;
 	}
 		
 	if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
@@ -741,15 +739,10 @@ void renderScene(GLFWwindow* window) {
 	// draw skybox last
 	glDepthFunc(GL_LEQUAL);
 
-	// perform equivalent of glm::mat4(glm::mat3(view))
-	global_scene.view[3] = 0.0f;
-	global_scene.view[7] = 0.0f;
-	global_scene.view[11] = 0.0f;
-	global_scene.view[12] = 0.0f;
-	global_scene.view[13] = 0.0f;
-	global_scene.view[14] = 0.0f;
-	global_scene.view[15] = 1.0f;
+	// skybox needs to follow us around
+	remove_translation_mat4(global_scene.view);
 
+	// precompute projview
 	mat4_mul(global_scene.projview, global_scene.proj, global_scene.view);
 
 	glUseProgram(skyboxShader);
@@ -907,17 +900,19 @@ void initShaders() {
 	// fragment shader: defines transformation on individual fragments (usually color)
 	//////////////////////////////////////////////
 	
-	const int numShaders = 2;
 	unsigned int basicShader = loadShader("src/shaders/basicShader.vs", "src/shaders/basicShader.fs");
 	unsigned int skyboxShader = loadShader("src/shaders/skyboxShader.vs", "src/shaders/skyboxShader.fs");
+	if (basicShader == 0) { printf("basicShader==0 in initShaders\n"); }
+	if (basicShader == 1) { printf("skyboxShader==0 in initShaders\n"); }
 
-	Shader* shader = (Shader*)malloc(sizeof(Shader)*numShaders);
-	shader[0].shaderID = basicShader;
-	shader[1].shaderID = skyboxShader;
+	// @TODO: learn how to pool these resources correctly
+	Shader* shader0 = (Shader*)calloc(1, sizeof(Shader));
+	shader0->shaderID = basicShader;
+	addShaderToGlobalPool(shader0);
 
-	for (int i = 0; i < numShaders; i++) {
-		addShaderToGlobalPool(&shader[i]);
-	}
+	Shader* shader1 = (Shader*)calloc(1, sizeof(Shader));
+	shader1->shaderID = skyboxShader;
+	addShaderToGlobalPool(shader1);
 
 	// @TODO: get locations to shader uniforms
 	//       if we enhance shader struct to dynamically use these,
@@ -1033,6 +1028,8 @@ void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
 	set3f(meshInstance->color, 1.0f, 1.0f, 1.0f);
 	set3f(meshInstance->scale, 1.0f, 1.0f, 1.0f);
 	set4f(meshInstance->rotation, 1.0f, 0.0f, 0.0f, 0.0f);
+
+	set3f(meshInstance->velocity, 0.0f, 0.0f, 0.0f);
 	
 	set3f(meshInstance->hullColor, 1.0f, 0.5f, 0.0f);
 
@@ -1082,7 +1079,7 @@ void loadScene() {
 	// camera
 	set3f(global_scene.camera.pos, 1.25f, 3.5f, 5.0f);
 	set3f(global_scene.camera.front, -0.25f, -0.5, -1.0f);
-	normalize_in_place3f(global_scene.camera.front);
+	normalize3f_inplace(global_scene.camera.front);
 	global_scene.camera.pitch = degreesf(asinf(global_scene.camera.front[1]));
 	global_scene.camera.yaw = degreesf(atan2f(global_scene.camera.front[2], global_scene.camera.front[0]));
 }
@@ -1108,24 +1105,33 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		"resources/large_files/kayle.obj"  
 	};
 	const int vnormal_style = 0; // { 0 = flat | 1 = smooth }
-	Mesh* meshList = (Mesh*)malloc(sizeof(Mesh) * num_meshes);
+	// this caused a bug because I'm trying to operate on elements of this array as if they were malloc'd individually
+	// in the future if I use a pool for this resource, just realloc directly on the global resource pool
+	// Mesh* meshList = (Mesh*)malloc(sizeof(Mesh) * num_meshes);  
 	for (int i = 0; i < num_meshes; i++) {
-		initMesh(&meshList[i]);
+		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
+		initMesh(mesh);
 		printf("loading mesh from file: %s\n", list_of_meshes[i]);
 		tic();
-		malloc_mesh_fields_from_obj_file(list_of_meshes[i], &meshList[i]);
+		if (!malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh)) { 
+			printf("malloc_mesh_fields_from_obj_file returned 0 in initGlobalResourcePoolMallocMeshAndMeshFields for mesh %s\n", list_of_meshes[i]);
+			free(mesh);
+			continue; 
+		}
 		printf("  TIME LOAD %s: %.6f ms\n", list_of_meshes[i], toc());
 		// if we couldn't load normals from file, then compute them now
-		if (!meshList[i].has_normals) {
+		if (!mesh->has_normals) {
 			printf("  Normals not found. Computing normals and rebuilding mesh.\n");
 			tic();
 			if (vnormal_style == 0) {
-				realloc_mesh_with_face_vertices(&meshList[i]);
-				compute_vnormal_flat(&meshList[i]);
+				realloc_mesh_with_face_vertices(mesh);
+				printf("finished realloc mesh with face vertex\n");
+				compute_vnormal_flat(mesh);
+				printf("finished vnormal flat\n");
 			} else if (vnormal_style == 1) {
 				const int tol = 5;
-				deduplicate_mesh_vertices(&meshList[i], tol);
-				compute_vnormal_smooth(&meshList[i]);
+				deduplicate_mesh_vertices(mesh, tol);
+				compute_vnormal_smooth(mesh);
 			} else {
 				printf("  Warning: vnormal_style not set. Unable to load normals.\n");
 			}
@@ -1135,9 +1141,9 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		// @NOTE:
 		// We probably shouldn't auto mutate resources unless specifically saved from the program, except maybe as one-time processing.
 		// Maybe we write a new function to serialize the whole mesh (with vnormal) back.
-		printf("  v: %d | f: %d\n", meshList[i].num_vertices, meshList[i].num_faces);
-		addMeshToGlobalPool(&meshList[i]);
-		uploadMeshBuffers(&meshList[i]);
+		printf("  v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
+		addMeshToGlobalPool(mesh);
+		uploadMeshBuffers(mesh);
 	}
 	return global_resource_pool.meshCount;
 }
@@ -1159,18 +1165,25 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// smaller vertex for algorithm
 	struct Point {
 		float pos[3];
+		unsigned int vertexIndex; // index of this point into the output vertex list
+		bool assigned; // if vertexIndex is assigned yet
 	};
 	
 	// the literature calls these facets but they are just faces
 	struct Facet {
 		unsigned int points[3]; // index in a list of points
+
+		unsigned int* extPointList; // dynamic list of exterior point indices
+		size_t extPointSize;
+
 		float normal[3];
 		float offset; // plane = { x : n dot x = d }; d is the offset
+
 		int active; // instead of deleting, just mark as inactive
 	};
 
 	// convexHull guaranteed to have size <= current size so we prealloc here and resize at the end
-	Point* pointListInput = (Point*)malloc(sizeof(Point) * mesh->num_vertices);
+	Point* pointList = (Point*)malloc(sizeof(Point) * mesh->num_vertices);
 	size_t pointListIndex = 0;
 	
 	// ===== DEDUPLICATION PASS =====
@@ -1211,156 +1224,287 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			}
 			ptr->bucket[ptr->bucket_next] = v;
 			ptr->bucket_next++;
-			pointListInput[pointListIndex].pos[0] = v->pos[0];
-			pointListInput[pointListIndex].pos[1] = v->pos[1];
-			pointListInput[pointListIndex].pos[2] = v->pos[2];
+			set3fv(pointList[pointListIndex].pos, v->pos);
+			pointList[pointListIndex].assigned = false;
 			pointListIndex++;
 		}
 	}
 	free(set);
-	pointListInput = (Point*)realloc(pointListInput, pointListIndex * sizeof(Point));	
-	printf("vertices deduplicated: %d (before) | %d (after)\n", mesh->num_vertices, pointListIndex);
+	pointList = (Point*)realloc(pointList, pointListIndex * sizeof(Point));
+	printf("(CONVEX HULL): vertices deduplicated: %d (before) | %d (after)\n", mesh->num_vertices, pointListIndex);
 	// ===== END DEDUP PASS =====
 
-	// list of points used in convex hull, overallocating for now
-	size_t pointListSize = 0;
-	size_t pointListCap = pointListIndex;
-	Point* pointListOutput = (Point*)malloc(sizeof(Point) * pointListCap);
-
+	// ===== BEGIN QUICKHULL =====
 	// list of facets used in convex hull, size may exceed cap and trigger realloc
 	size_t facetListSize = 0;
 	size_t facetListCap = mesh->num_faces;
-	Facet* facetListOutput = (Facet*)malloc(sizeof(Facet) * facetListCap);
+	Facet* facetList = (Facet*)malloc(sizeof(Facet) * facetListCap);
+	if (!facetList) { fprintf(stderr, "Failed to malloc facetList in makeConvexHull\n"); free(pointList); return NULL; }
 
 	// initial phase, pick 4 extreme points
-	Point* minX = &(pointListInput[0]);
-	Point* minY = &(pointListInput[0]);
-	Point* minZ = &(pointListInput[0]);
-	Point* maxX = &(pointListInput[0]);
-	Point* maxY = &(pointListInput[0]);
-	Point* maxZ = &(pointListInput[0]);
+	unsigned int minX = 0;
+	unsigned int minY = 0;
+	unsigned int minZ = 0;
+	unsigned int maxX = 0;
+	unsigned int maxY = 0;
+	unsigned int maxZ = 0;
 	for (int i = 1; i < pointListIndex; i++) {
-		if (pointListInput[i].pos[0] < minX->pos[0])
-			minX = &(pointListInput[i]);
-		if (pointListInput[i].pos[1] < minY->pos[1])
-			minY = &(pointListInput[i]);
-		if (pointListInput[i].pos[2] < minZ->pos[2])
-			minZ = &(pointListInput[i]);
-		if (pointListInput[i].pos[0] > maxX->pos[0])
-			maxX = &(pointListInput[i]);
-		if (pointListInput[i].pos[1] > maxY->pos[1])
-			maxY = &(pointListInput[i]);
-		if (pointListInput[i].pos[2] > maxZ->pos[2])
-			maxZ = &(pointListInput[i]);
+		if (pointList[i].pos[0] < pointList[minX].pos[0]) minX = i;
+		if (pointList[i].pos[1] < pointList[minY].pos[1]) minY = i;
+		if (pointList[i].pos[2] < pointList[minZ].pos[2]) minZ = i;
+		if (pointList[i].pos[0] > pointList[maxX].pos[0]) maxX = i;
+		if (pointList[i].pos[1] > pointList[maxY].pos[1]) maxY = i;
+		if (pointList[i].pos[2] > pointList[maxZ].pos[2]) maxZ = i;
 	}
-	printf("minX = %.5f %.5f %.5f\n", minX->pos[0], minX->pos[1], minX->pos[2]);
-	printf("maxX = %.5f %.5f %.5f\n", maxX->pos[0], maxX->pos[1], maxX->pos[2]);
-	printf("minY = %.5f %.5f %.5f\n", minY->pos[0], minY->pos[1], minY->pos[2]);
-	printf("maxY = %.5f %.5f %.5f\n", maxY->pos[0], maxY->pos[1], maxY->pos[2]);
-	printf("minZ = %.5f %.5f %.5f\n", minZ->pos[0], minZ->pos[1], minZ->pos[2]);
-	printf("maxZ = %.5f %.5f %.5f\n", maxZ->pos[0], maxZ->pos[1], maxZ->pos[2]);
+	printf("minX = %.5f %.5f %.5f\n", pointList[minX].pos[0], pointList[minX].pos[1], pointList[minX].pos[2]);
+	printf("maxX = %.5f %.5f %.5f\n", pointList[maxX].pos[0], pointList[maxX].pos[1], pointList[maxX].pos[2]);
+	printf("minY = %.5f %.5f %.5f\n", pointList[minY].pos[0], pointList[minY].pos[1], pointList[minY].pos[2]);
+	printf("maxY = %.5f %.5f %.5f\n", pointList[maxY].pos[0], pointList[maxY].pos[1], pointList[maxY].pos[2]);
+	printf("minZ = %.5f %.5f %.5f\n", pointList[minZ].pos[0], pointList[minZ].pos[1], pointList[minZ].pos[2]);
+	printf("maxZ = %.5f %.5f %.5f\n", pointList[maxZ].pos[0], pointList[maxZ].pos[1], pointList[maxZ].pos[2]);
 
 	// initial simplex:
 	// p1, p2 are min/max of one dim of above
 	// p3 is argmax distance from p1p2 segment
-	// p4 is argmax distance from plane
+	// p4 is argmax distance from p1p2p3 plane
+	unsigned int p0, p1, p2, p3;
+	unsigned int tempIndex;
 
 	// step 1: take min/max along X
-	// for now just taking 4 at random
-	pointListOutput[pointListSize++] = *minX;
-	pointListOutput[pointListSize++] = *maxX;
+	p0 = minX;
+	p1 = maxX;
+	printf("P0 = %.5f %.5f %.5f\n", pointList[p0].pos[0], pointList[p0].pos[1], pointList[p0].pos[2]);
+	printf("P1 = %.5f %.5f %.5f\n", pointList[p1].pos[0], pointList[p1].pos[1], pointList[p1].pos[2]);
 
-	// step 2: find point farthest in perpendicular distance from segment
-	Point* p = &(pointListInput[0]);
+	// step 2: find point farthest in perpendicular distance from segment (p0p1)
+	// distance(p, p1p2) = ||(p - p0) x (p1 - p0)|| / || p1 - p0 ||
+	//   but we can just check || (p - p0) x (p1 - p0) ||^2
+	p2 = 0;
 	float maxDist = 0;
-	float newSegment[3]; // p - minX
-	float segment[3]; // maxX - minX
+	float newSegment[3]; // p - p0
+	float segment[3]; // p1 - p0
 	float temp[3];
 	float distance;
+	sub3f(segment, pointList[p2].pos, pointList[p1].pos);
 	for (int i = 1; i < pointListIndex; i++) {
-		sub3f(newSegment, pointListInput[i].pos, minX->pos);
-		sub3f(segment, maxX->pos, minX->pos);
-		cross3f(temp, newSegment, segment);
-		distance = sqrtf(dot3f(temp, temp)) / sqrtf(dot3f(segment, segment));
+		if (i == p0 || i == p1) continue; // skip these points
+		sub3f(newSegment, pointList[i].pos, pointList[p0].pos);
+		cross3f(temp, newSegment, segment); // (p - p0) x (p1 - p0)
+		distance = dot3f(temp, temp);
 		if (distance > maxDist) {
-			p = &pointListInput[i];
+			p2 = i;
 			maxDist = distance;
 		}
 	}
-	printf("P3 = %.5f %.5f %.5f with distance=%.5f\n", p->pos[0], p->pos[1], p->pos[2], distance);
-	pointListOutput[pointListSize++] = *p;
+	printf("P2 = %.5f %.5f %.5f with maxVal=%.5f\n", pointList[p2].pos[0], pointList[p2].pos[1], pointList[p2].pos[2], maxDist);
 
 	// step 3: find point farthest in perpendicular distance from normal
-	sub3f(newSegment, p->pos, minX->pos);
-	sub3f(segment, maxX->pos, minX->pos);
+	// normal(p1p2p3) = normalize((p3 - p1) x (p2 - p1))
+	// distance(p, p1p2p3) = abs( (p3 - p1) . (normal) ) 
+	sub3f(newSegment, pointList[p2].pos, pointList[p0].pos);
+	sub3f(segment, pointList[p1].pos, pointList[p0].pos);
 	cross3f(temp, newSegment, segment);
-	normalize_in_place3f(temp); // this is a normal vector to the p1p2p3 triangle
-	p = &(pointListInput[0]);
+	normalize3f_inplace(temp); // this is a normal vector to the p1p2p3 triangle
+	p3 = 0;
 	maxDist = 0;
 	distance = 0;
 	for (int i = 0; i < pointListIndex; i++) {
-		sub3f(newSegment, pointListInput[i].pos, minX->pos);
+		sub3f(newSegment, pointList[i].pos, pointList[p0].pos);
 		distance = fabsf(dot3f(newSegment, temp));
 		if (distance > maxDist) {
-			p = &pointListInput[i];
+			p3 = i;
 			maxDist = distance;
 		}
 	}
-	printf("P4 = %.5f %.5f %.5f with distance=%.5f\n", p->pos[0], p->pos[1], p->pos[2], distance);
-	pointListOutput[pointListSize++] = *p;
+	printf("P3 = %.5f %.5f %.5f with maxVal=%.5f\n", pointList[p3].pos[0], pointList[p3].pos[1], pointList[p3].pos[2], maxDist);
+
+	// Compute centroid to orient direction of normals away from center
+	Point centroid;
+	set3fv(centroid.pos, pointList[p0].pos);
+	add3f(centroid.pos, centroid.pos, pointList[p1].pos);
+	add3f(centroid.pos, centroid.pos, pointList[p2].pos);
+	add3f(centroid.pos, centroid.pos, pointList[p3].pos);
+	normalize3f_inplace(centroid.pos);
+	printf("Centroid = %.5f %.5f %.5f\n", centroid.pos[0], centroid.pos[1], centroid.pos[2]);
 
 	// set initial faces for tetrahedron
-	set3u(facetListOutput[facetListSize].points, 0, 1, 2);
-	facetListOutput[facetListSize].active = true;
+	// Note: I would like to have an append_new_facet(facetList, A, B, C) function but I am defining the structs inside this function
+	//       Maybe I can just write this in a loop and use p[i != j] or something to generalize it
+	// ===== begin add_new_facet(facetList, p0, p1, p2) =====
+	Facet* currentFacet = &facetList[facetListSize];
+	unsigned int A = p0;
+	unsigned int B = p1;
+	unsigned int C = p2;
+	set3u(currentFacet->points, A, B, C);
+	set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
+	// if normal . (p0 - centroid) < 0, then our normal points inward so reorient the triangle
+	sub3f(temp, pointList[A].pos, centroid.pos);
+	if (dot3f(currentFacet->normal, temp) < 0) {
+		currentFacet->normal[0] = -currentFacet->normal[0];
+		currentFacet->normal[1] = -currentFacet->normal[1];
+		currentFacet->normal[2] = -currentFacet->normal[2];
+		tempIndex = currentFacet->points[1];
+		currentFacet->points[1] = currentFacet->points[2];
+		currentFacet->points[2] = tempIndex;
+	}
+	currentFacet->active = true;	
+	currentFacet->extPointList = nullptr;
+	currentFacet->extPointSize = 0;
 	facetListSize++;
+	// ===== end add_new_facet(facetList, p0, p1, p2) =====
+	printf("added first facet\n");
 
-	set3u(facetListOutput[facetListSize].points, 0, 1, 3);
-	facetListOutput[facetListSize].active = true;
+	// ===== begin add_new_facet(facetList, p0, p1, p3) =====
+	currentFacet = &facetList[facetListSize];
+	A = p0;
+	B = p1;
+	C = p3;
+	set3u(currentFacet->points, A, B, C);
+	set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
+	sub3f(temp, pointList[A].pos, centroid.pos);
+	if (dot3f(currentFacet->normal, temp) < 0) {
+		currentFacet->normal[0] = -currentFacet->normal[0];
+		currentFacet->normal[1] = -currentFacet->normal[1];
+		currentFacet->normal[2] = -currentFacet->normal[2];
+		tempIndex = currentFacet->points[1];
+		currentFacet->points[1] = currentFacet->points[2];
+		currentFacet->points[2] = tempIndex;
+	}
+	currentFacet->active = true;	
+	currentFacet->extPointList = nullptr;
+	currentFacet->extPointSize = 0;
 	facetListSize++;
+	// ===== end add_new_facet(facetList, p0, p1, p3) =====
+	printf("added second facet\n");
 
-	set3u(facetListOutput[facetListSize].points, 0, 2, 3);
-	facetListOutput[facetListSize].active = true;
+	// ===== begin add_new_facet(facetList, p0, p2, p3) =====
+	currentFacet = &facetList[facetListSize];
+	A = p0;
+	B = p2;
+	C = p3;
+	set3u(currentFacet->points, A, B, C);
+	set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
+	sub3f(temp, pointList[A].pos, centroid.pos);
+	if (dot3f(currentFacet->normal, temp) < 0) {
+		currentFacet->normal[0] = -currentFacet->normal[0];
+		currentFacet->normal[1] = -currentFacet->normal[1];
+		currentFacet->normal[2] = -currentFacet->normal[2];
+		tempIndex = currentFacet->points[1];
+		currentFacet->points[1] = currentFacet->points[2];
+		currentFacet->points[2] = tempIndex;
+	}
+	currentFacet->active = true;
+	currentFacet->extPointList = nullptr;
+	currentFacet->extPointSize = 0;
 	facetListSize++;
+	// ===== end add_new_facet(facetList, p0, p2, p3) =====
+	printf("added third facet\n");
 
-	set3u(facetListOutput[facetListSize].points, 1, 2, 3);
-	facetListOutput[facetListSize].active = true;
+	// ===== begin add_new_facet(facetList, p1, p2, p3) =====
+	currentFacet = &facetList[facetListSize];
+	A = p1;
+	B = p2;
+	C = p3;
+	set3u(currentFacet->points, A, B, C);
+	set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
+	sub3f(temp, pointList[A].pos, centroid.pos);
+	if (dot3f(currentFacet->normal, temp) < 0) {
+		currentFacet->normal[0] = -currentFacet->normal[0];
+		currentFacet->normal[1] = -currentFacet->normal[1];
+		currentFacet->normal[2] = -currentFacet->normal[2];
+		tempIndex = currentFacet->points[1];
+		currentFacet->points[1] = currentFacet->points[2];
+		currentFacet->points[2] = tempIndex;
+	}
+	currentFacet->active = true;
+	currentFacet->extPointList = nullptr;
+	currentFacet->extPointSize = 0;
 	facetListSize++;
+	// ===== end add_new_facet(facetList, p1, p2, p3) =====
+	printf("added fourth facet\n");
 
+	// Assign every remaining point to one of the four facets; the one it is farthest outside of
+	printf("beginning point assignment (not yet implemented)\n");
+
+
+	// Main loop:
+	//  1. Take a facet that is both active and has exterior points
+	//  2. Find the point p which is farthest outside that facet (max perp. distance)
+	//  3. Find all facets visible to p and set as inactive
+	//  4. Find all horizon edges (with p1, p2) and form a new facet (p, p1, p2) with corrected orientation (increases facetListSize)
+	//  5. Reassign all exterior points belonging to the inactive facets among the newly created facets
+	//  6. After each iteration, a processed facet will be inactive or have no outside points
+	printf("beginning main loop (not yet completed)\n");
+	int numActiveFacets = 4;
+	for (size_t i = 0; i < facetListSize; i++) {
+		if (!facetList[i].active || facetList[i].extPointSize == 0) continue;
+		
+		unsigned int p = facetList[i].extPointList[0];
+		float maxDist = 0;
+		for (size_t j = 0; j < facetList[i].extPointSize; j++) {
+
+		}
+	}
+
+
+
+
+
+	printf("ended main loop (not yet completed)\n");
+
+	// ===== END QUICKHULL =====
+	printf("==== END QUICKHULL ====\n");
+
+	// ===== BUILD MESH FROM CONVEX HULL =====
 	// now the convex hull is created, we stuff this in a mesh
 	Mesh* convexHull = (Mesh*)malloc(sizeof(Mesh));
 	initMesh(convexHull);
 	convexHull->hullId = -1;
 
 	// set mesh vertices
-	convexHull->vertices = (Vertex*)malloc(sizeof(Vertex)*pointListSize);
-	convexHull->num_vertices = pointListSize;
-	for (int i = 0; i < pointListSize; i++) {
-		convexHull->vertices[i].pos[0] = pointListOutput[i].pos[0];
-		convexHull->vertices[i].pos[1] = pointListOutput[i].pos[1];
-		convexHull->vertices[i].pos[2] = pointListOutput[i].pos[2];
-	}
-
-	// set mesh faces
-	// even though we have face normals here, we may not be able to easily set them back to each vertex
-	// also convex hulls will be displayed differently anyways; dont need shading
-	convexHull->faces = (Face*)malloc(sizeof(Face)*facetListSize);
-	convexHull->num_faces = facetListSize;
-	convexHull->has_normals = false;
+	convexHull->vertices = (Vertex*)malloc(sizeof(Vertex)*numActiveFacets*3); // overallocate then realloc later
+	convexHull->faces = (Face*)malloc(sizeof(Face)*numActiveFacets);
+	convexHull->num_faces = numActiveFacets;
 	size_t faceIndex = 0;
+	size_t vertexIndex = 0;
 	for (int i = 0; i < facetListSize; i++) {
-		if (facetListOutput[i].active) {
-			convexHull->faces[faceIndex].vertexId[0] = facetListOutput[i].points[0];
-			convexHull->faces[faceIndex].vertexId[1] = facetListOutput[i].points[1];
-			convexHull->faces[faceIndex].vertexId[2] = facetListOutput[i].points[2];
-			faceIndex++;
+		if (!facetList[i].active) continue;
+		Point* p0 = &pointList[facetList[i].points[0]];
+		Point* p1 = &pointList[facetList[i].points[1]];
+		Point* p2 = &pointList[facetList[i].points[2]];
+		if (!p0->assigned) {
+			// add p0
+			set3fv(convexHull->vertices[vertexIndex].pos, p0->pos);
+			p0->vertexIndex = vertexIndex;
+			p0->assigned = true;
+			vertexIndex++;
 		}
-		// @TODO: check if we grew too large
+		if (!p1->assigned) {
+			// add p1
+			set3fv(convexHull->vertices[vertexIndex].pos, p1->pos);
+			p1->vertexIndex = vertexIndex;
+			p1->assigned = true;
+			vertexIndex++;
+		}
+		if (!p2->assigned) {
+			// add p2
+			set3fv(convexHull->vertices[vertexIndex].pos, p2->pos);
+			p2->vertexIndex = vertexIndex;
+			p2->assigned = true;
+			vertexIndex++;
+		}
+		// add face p0,p1,p2
+		set3u(convexHull->faces[faceIndex].vertexId, p0->vertexIndex, p1->vertexIndex, p2->vertexIndex);
+		faceIndex++;
 	}
-	convexHull->faces = (Face*)realloc(convexHull->faces, sizeof(Face)*faceIndex);
 
-	free(pointListInput);
-	free(pointListOutput);
-	free(facetListOutput);
+	// realloc
+	convexHull->vertices = (Vertex*)realloc(convexHull->vertices, sizeof(Vertex)*vertexIndex);
+	convexHull->num_vertices = vertexIndex;
+	// ===== END MESH BUILDING =====
+
+	free(pointList);
+	free(facetList);
 	return convexHull;
 }
 
