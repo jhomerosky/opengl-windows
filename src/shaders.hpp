@@ -15,6 +15,8 @@ GLuint loadShader(char* vertexShaderSource, char* fragmentShaderSource);
 // Compile the shader
 GLuint compileShader(GLenum type, const char* source) {
     GLuint shader = glCreateShader(type);
+    if (!shader) { fprintf(stderr, "Failed to create shader object\n"); return 0; }
+
     glShaderSource(shader, 1, &source, NULL);
     glCompileShader(shader);
 
@@ -24,6 +26,7 @@ GLuint compileShader(GLenum type, const char* source) {
         char infoLog[512];
         glGetShaderInfoLog(shader, 512, NULL, infoLog);
         fprintf(stderr, "Shader Compilation Failed\n%s\n", infoLog);
+        glDeleteShader(shader);
         return 0;
     }
     return shader;
@@ -48,7 +51,7 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
         char infoLog[512];
         glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
         fprintf(stderr, "Shader Program Linking Failed\n%s\n", infoLog);
-        return 0;
+        shaderProgram = 0;
     }
 
     // clean up shaders after linking
@@ -63,7 +66,14 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
 GLuint loadShader(const char* vertexShaderSourceFilename, const char* fragmentShaderSourceFilename) {
 	const char* vertexShaderSource = mallocTextFromFile(vertexShaderSourceFilename);
 	const char* fragmentShaderSource = mallocTextFromFile(fragmentShaderSourceFilename);
-	GLuint shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
+    GLuint shaderProgram = 0;
+
+    if (vertexShaderSource && fragmentShaderSource) {
+        shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
+    } else {
+        fprintf(stderr, "Shader source is null in loadShader\n");
+    }
+
 	free((void*)vertexShaderSource);
 	free((void*)fragmentShaderSource);
 

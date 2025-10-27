@@ -65,7 +65,7 @@ struct Shader {
 void free_shader(Shader* shader) {
 	free(shader->uniformNames);
 	free(shader->uniformLoc);
-	shader->uniformCount = 0;
+	free(shader);
 }
 
 // @TODO: get rid of this if this is bad

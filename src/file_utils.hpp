@@ -5,7 +5,7 @@
 
 // ===== header =====
 int fgets_str(char* buf, int max_length, const char* text, long* text_index);
-const char* mallocTextFromFile(const char* filename);
+char* mallocTextFromFile(const char* filename);
 // ===== end header =====
 
 // for optimized .obj loading
@@ -30,7 +30,7 @@ int fgets_str(char* buf, int max_length, const char* text, long* text_index) {
 }
 
 // reads text file onto a new string
-const char* mallocTextFromFile(const char* filename) {
+char* mallocTextFromFile(const char* filename) {
     FILE* file = fopen(filename, "r");
     if (!file) { fprintf(stderr, "Failed to open text file: %s\n", filename); return NULL; }
 
