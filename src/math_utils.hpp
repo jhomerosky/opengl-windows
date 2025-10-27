@@ -20,8 +20,10 @@ static inline float dot3f(const float u[3], const float v[3]);
 static inline float dot4f(const float u[4], const float v[4]);
 static inline float fast_rsqrt(float number);
 static inline void quat_mult(float p[4], float q[4], float res[4]);
+static inline void negate3f_inplace(float out[3]);
 static inline void add3f(float out[3], const float v1[3], const float v2[3]);
 static inline void sub3f(float out[3], const float v1[3], const float v2[3]);
+static inline void mult3f(float out[3], const float in[3], const float factor);
 static inline void cross3f(float out[3], const float v1[3], const float v2[3]);
 static inline void normalize3f_inplace(float v[3]);
 static inline bool equals3f(const float v1[3], const float v2[3], const float eps);
@@ -63,6 +65,13 @@ static inline bool equals3f(const float v1[3], const float v2[3], const float ep
 	);
 }
 
+// out = -out
+static inline void negate3f_inplace(float out[3]) {
+	out[0] = -out[0];
+	out[1] = -out[1];
+	out[2] = -out[2];
+}
+
 // out = v1 + v2, safe to use A = A + B
 static inline void add3f(float out[3], const float v1[3], const float v2[3]) {
 	out[0] = v1[0] + v2[0];
@@ -75,6 +84,13 @@ static inline void sub3f(float out[3], const float v1[3], const float v2[3]) {
 	out[0] = v1[0] - v2[0];
 	out[1] = v1[1] - v2[1];
 	out[2] = v1[2] - v2[2];
+}
+
+// out = in * factor; safe to use A = A*factor
+static inline void mult3f(float out[3], const float in[3], const float factor) {
+	out[0] = in[0]*factor;
+	out[1] = in[1]*factor;
+	out[2] = in[2]*factor;
 }
 
 // out = v1 cross v2; not safe for A = A cross B

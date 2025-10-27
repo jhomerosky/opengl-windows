@@ -1324,7 +1324,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	add3f(centroid.pos, centroid.pos, pointList[p1].pos);
 	add3f(centroid.pos, centroid.pos, pointList[p2].pos);
 	add3f(centroid.pos, centroid.pos, pointList[p3].pos);
-	normalize3f_inplace(centroid.pos);
+	mult3f(centroid.pos, centroid.pos, 0.25f);
 	printf("Centroid = %.5f %.5f %.5f\n", centroid.pos[0], centroid.pos[1], centroid.pos[2]);
 
 	// set initial faces for tetrahedron
@@ -1340,9 +1340,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// if normal . (p0 - centroid) < 0, then our normal points inward so reorient the triangle
 	sub3f(temp, pointList[A].pos, centroid.pos);
 	if (dot3f(currentFacet->normal, temp) < 0) {
-		currentFacet->normal[0] = -currentFacet->normal[0];
-		currentFacet->normal[1] = -currentFacet->normal[1];
-		currentFacet->normal[2] = -currentFacet->normal[2];
+		negate3f_inplace(currentFacet->normal);
 		tempIndex = currentFacet->points[1];
 		currentFacet->points[1] = currentFacet->points[2];
 		currentFacet->points[2] = tempIndex;
@@ -1363,9 +1361,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
 	sub3f(temp, pointList[A].pos, centroid.pos);
 	if (dot3f(currentFacet->normal, temp) < 0) {
-		currentFacet->normal[0] = -currentFacet->normal[0];
-		currentFacet->normal[1] = -currentFacet->normal[1];
-		currentFacet->normal[2] = -currentFacet->normal[2];
+		negate3f_inplace(currentFacet->normal);
 		tempIndex = currentFacet->points[1];
 		currentFacet->points[1] = currentFacet->points[2];
 		currentFacet->points[2] = tempIndex;
@@ -1386,9 +1382,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
 	sub3f(temp, pointList[A].pos, centroid.pos);
 	if (dot3f(currentFacet->normal, temp) < 0) {
-		currentFacet->normal[0] = -currentFacet->normal[0];
-		currentFacet->normal[1] = -currentFacet->normal[1];
-		currentFacet->normal[2] = -currentFacet->normal[2];
+		negate3f_inplace(currentFacet->normal);
 		tempIndex = currentFacet->points[1];
 		currentFacet->points[1] = currentFacet->points[2];
 		currentFacet->points[2] = tempIndex;
@@ -1409,9 +1403,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
 	sub3f(temp, pointList[A].pos, centroid.pos);
 	if (dot3f(currentFacet->normal, temp) < 0) {
-		currentFacet->normal[0] = -currentFacet->normal[0];
-		currentFacet->normal[1] = -currentFacet->normal[1];
-		currentFacet->normal[2] = -currentFacet->normal[2];
+		negate3f_inplace(currentFacet->normal);
 		tempIndex = currentFacet->points[1];
 		currentFacet->points[1] = currentFacet->points[2];
 		currentFacet->points[2] = tempIndex;
