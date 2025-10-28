@@ -1176,7 +1176,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		unsigned int* extPointList; // dynamic list of exterior point indices
 		size_t extPointSize;
 
-		float normal[3];
+		float normal[3]; // normal facing outward
 		float offset; // plane = { x : n dot x = d }; d is the offset
 
 		int active; // instead of deleting, just mark as inactive
@@ -1184,7 +1184,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 
 	// convexHull guaranteed to have size <= current size so we prealloc here and resize at the end
 	Point* pointList = (Point*)malloc(sizeof(Point) * mesh->num_vertices);
-	size_t pointListIndex = 0;
+	size_t pointListSize = 0;
 	
 	// ===== DEDUPLICATION PASS =====
 	const int BUCKET_SIZE = 10;
@@ -1224,14 +1224,14 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			}
 			ptr->bucket[ptr->bucket_next] = v;
 			ptr->bucket_next++;
-			set3fv(pointList[pointListIndex].pos, v->pos);
-			pointList[pointListIndex].assigned = false;
-			pointListIndex++;
+			set3fv(pointList[pointListSize].pos, v->pos);
+			pointList[pointListSize].assigned = false;
+			pointListSize++;
 		}
 	}
 	free(set);
-	pointList = (Point*)realloc(pointList, pointListIndex * sizeof(Point));
-	printf("(CONVEX HULL): vertices deduplicated: %d (before) | %d (after)\n", mesh->num_vertices, pointListIndex);
+	pointList = (Point*)realloc(pointList, pointListSize * sizeof(Point));
+	printf("(CONVEX HULL): vertices deduplicated: %d (before) | %d (after)\n", mesh->num_vertices, pointListSize);
 	// ===== END DEDUP PASS =====
 
 	// ===== BEGIN QUICKHULL =====
@@ -1241,40 +1241,40 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	Facet* facetList = (Facet*)malloc(sizeof(Facet) * facetListCap);
 	if (!facetList) { fprintf(stderr, "Failed to malloc facetList in makeConvexHull\n"); free(pointList); return NULL; }
 
-	// initial phase, pick 4 extreme points
-	unsigned int minX = 0;
-	unsigned int minY = 0;
-	unsigned int minZ = 0;
-	unsigned int maxX = 0;
-	unsigned int maxY = 0;
-	unsigned int maxZ = 0;
-	for (int i = 1; i < pointListIndex; i++) {
-		if (pointList[i].pos[0] < pointList[minX].pos[0]) minX = i;
-		if (pointList[i].pos[1] < pointList[minY].pos[1]) minY = i;
-		if (pointList[i].pos[2] < pointList[minZ].pos[2]) minZ = i;
-		if (pointList[i].pos[0] > pointList[maxX].pos[0]) maxX = i;
-		if (pointList[i].pos[1] > pointList[maxY].pos[1]) maxY = i;
-		if (pointList[i].pos[2] > pointList[maxZ].pos[2]) maxZ = i;
-	}
-	printf("minX = %.5f %.5f %.5f\n", pointList[minX].pos[0], pointList[minX].pos[1], pointList[minX].pos[2]);
-	printf("maxX = %.5f %.5f %.5f\n", pointList[maxX].pos[0], pointList[maxX].pos[1], pointList[maxX].pos[2]);
-	printf("minY = %.5f %.5f %.5f\n", pointList[minY].pos[0], pointList[minY].pos[1], pointList[minY].pos[2]);
-	printf("maxY = %.5f %.5f %.5f\n", pointList[maxY].pos[0], pointList[maxY].pos[1], pointList[maxY].pos[2]);
-	printf("minZ = %.5f %.5f %.5f\n", pointList[minZ].pos[0], pointList[minZ].pos[1], pointList[minZ].pos[2]);
-	printf("maxZ = %.5f %.5f %.5f\n", pointList[maxZ].pos[0], pointList[maxZ].pos[1], pointList[maxZ].pos[2]);
-
 	// initial simplex:
 	// p1, p2 are min/max of one dim of above
 	// p3 is argmax distance from p1p2 segment
 	// p4 is argmax distance from p1p2p3 plane
 	unsigned int p0, p1, p2, p3;
-	unsigned int tempIndex;
 
 	// step 1: take min/max along X
-	p0 = minX;
-	p1 = maxX;
+	{
+		unsigned int minX = 0;
+		unsigned int minY = 0;
+		unsigned int minZ = 0;
+		unsigned int maxX = 0;
+		unsigned int maxY = 0;
+		unsigned int maxZ = 0;
+		for (int i = 1; i < pointListSize; i++) {
+			if (pointList[i].pos[0] < pointList[minX].pos[0]) minX = i;
+			if (pointList[i].pos[1] < pointList[minY].pos[1]) minY = i;
+			if (pointList[i].pos[2] < pointList[minZ].pos[2]) minZ = i;
+			if (pointList[i].pos[0] > pointList[maxX].pos[0]) maxX = i;
+			if (pointList[i].pos[1] > pointList[maxY].pos[1]) maxY = i;
+			if (pointList[i].pos[2] > pointList[maxZ].pos[2]) maxZ = i;
+		}
+		printf("minX = %.5f %.5f %.5f\n", pointList[minX].pos[0], pointList[minX].pos[1], pointList[minX].pos[2]);
+		printf("maxX = %.5f %.5f %.5f\n", pointList[maxX].pos[0], pointList[maxX].pos[1], pointList[maxX].pos[2]);
+		printf("minY = %.5f %.5f %.5f\n", pointList[minY].pos[0], pointList[minY].pos[1], pointList[minY].pos[2]);
+		printf("maxY = %.5f %.5f %.5f\n", pointList[maxY].pos[0], pointList[maxY].pos[1], pointList[maxY].pos[2]);
+		printf("minZ = %.5f %.5f %.5f\n", pointList[minZ].pos[0], pointList[minZ].pos[1], pointList[minZ].pos[2]);
+		printf("maxZ = %.5f %.5f %.5f\n", pointList[maxZ].pos[0], pointList[maxZ].pos[1], pointList[maxZ].pos[2]);
+		p0 = minX;
+		p1 = maxX;
+	}
 	printf("P0 = %.5f %.5f %.5f\n", pointList[p0].pos[0], pointList[p0].pos[1], pointList[p0].pos[2]);
 	printf("P1 = %.5f %.5f %.5f\n", pointList[p1].pos[0], pointList[p1].pos[1], pointList[p1].pos[2]);
+
 
 	// step 2: find point farthest in perpendicular distance from segment (p0p1)
 	// distance(p, p1p2) = ||(p - p0) x (p1 - p0)|| / || p1 - p0 ||
@@ -1286,7 +1286,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	float temp[3];
 	float distance;
 	sub3f(segment, pointList[p2].pos, pointList[p1].pos);
-	for (int i = 1; i < pointListIndex; i++) {
+	for (int i = 1; i < pointListSize; i++) {
 		if (i == p0 || i == p1) continue; // skip these points
 		sub3f(newSegment, pointList[i].pos, pointList[p0].pos);
 		cross3f(temp, newSegment, segment); // (p - p0) x (p1 - p0)
@@ -1308,7 +1308,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	p3 = 0;
 	maxDist = 0;
 	distance = 0;
-	for (int i = 0; i < pointListIndex; i++) {
+	for (int i = 0; i < pointListSize; i++) {
 		sub3f(newSegment, pointList[i].pos, pointList[p0].pos);
 		distance = fabsf(dot3f(newSegment, temp));
 		if (distance > maxDist) {
@@ -1328,96 +1328,68 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	printf("Centroid = %.5f %.5f %.5f\n", centroid.pos[0], centroid.pos[1], centroid.pos[2]);
 
 	// set initial faces for tetrahedron
-	// Note: I would like to have an append_new_facet(facetList, A, B, C) function but I am defining the structs inside this function
-	//       Maybe I can just write this in a loop and use p[i != j] or something to generalize it
-	// ===== begin add_new_facet(facetList, p0, p1, p2) =====
-	Facet* currentFacet = &facetList[facetListSize];
-	unsigned int A = p0;
-	unsigned int B = p1;
-	unsigned int C = p2;
-	set3u(currentFacet->points, A, B, C);
-	set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
-	// if normal . (p0 - centroid) < 0, then our normal points inward so reorient the triangle
-	sub3f(temp, pointList[A].pos, centroid.pos);
-	if (dot3f(currentFacet->normal, temp) < 0) {
-		negate3f_inplace(currentFacet->normal);
-		tempIndex = currentFacet->points[1];
-		currentFacet->points[1] = currentFacet->points[2];
-		currentFacet->points[2] = tempIndex;
+	// Note: I would like to have an append_new_facet(facetList, A, B, C) function but I can't do that because am defining the structs inside this function.
+	//       Instead I am just defining an input set and looping over the input set.
+	{
+		unsigned int inputConfig[4][3] = {
+			{p0, p1, p2},
+			{p0, p1, p3},
+			{p0, p2, p3},
+			{p1, p2, p3}
+		};
+		Facet* currentFacet;
+		unsigned int A, B, C;
+		for (int i = 0; i < 4; i++) {
+			currentFacet = &facetList[facetListSize];
+			A = inputConfig[i][0];
+			B = inputConfig[i][1];
+			C = inputConfig[i][2];
+			set3u(currentFacet->points, A, B, C);
+			set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
+			// if normal . (A - centroid) < 0, then our normal points inward so reorient the triangle
+			sub3f(temp, pointList[A].pos, centroid.pos);
+			if (dot3f(currentFacet->normal, temp) < 0) {
+				negate3f_inplace(currentFacet->normal);
+				currentFacet->points[1] = C;
+				currentFacet->points[2] = B;
+			}
+			currentFacet->offset = dot3f(currentFacet->normal, pointList[A].pos);
+			currentFacet->active = true;	
+			currentFacet->extPointList = (unsigned int*)malloc(pointListSize*sizeof(unsigned int));
+			currentFacet->extPointSize = 0;
+			facetListSize++;
+		}
 	}
-	currentFacet->active = true;	
-	currentFacet->extPointList = nullptr;
-	currentFacet->extPointSize = 0;
-	facetListSize++;
-	// ===== end add_new_facet(facetList, p0, p1, p2) =====
-	printf("added first facet\n");
 
-	// ===== begin add_new_facet(facetList, p0, p1, p3) =====
-	currentFacet = &facetList[facetListSize];
-	A = p0;
-	B = p1;
-	C = p3;
-	set3u(currentFacet->points, A, B, C);
-	set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
-	sub3f(temp, pointList[A].pos, centroid.pos);
-	if (dot3f(currentFacet->normal, temp) < 0) {
-		negate3f_inplace(currentFacet->normal);
-		tempIndex = currentFacet->points[1];
-		currentFacet->points[1] = currentFacet->points[2];
-		currentFacet->points[2] = tempIndex;
+	// Assign every remaining point to the facet (of the original 4) which it is farthest outside of, if it is outside
+	printf("beginning point assignment\n");
+	{
+		float distance;
+		float maxDist;
+		Facet* assignedFacet;
+		for (size_t i = 0; i < pointListSize; i++) {
+			if (i == p0 || i == p1 || i == p2 || i == p3) continue;
+			maxDist = 0;
+			assignedFacet = nullptr;
+			for (size_t j = 0; j < facetListSize; j++) {
+				distance = dot3f(pointList[i].pos, facetList[j].normal) - facetList[j].offset;
+				if (distance > maxDist) {
+					maxDist = distance;
+					assignedFacet = &facetList[j];
+				}
+			}
+			// if we are not an interior point
+			if (assignedFacet != nullptr) {
+				assignedFacet->extPointList[assignedFacet->extPointSize] = i;
+				assignedFacet->extPointSize++;
+			}
+		}
 	}
-	currentFacet->active = true;	
-	currentFacet->extPointList = nullptr;
-	currentFacet->extPointSize = 0;
-	facetListSize++;
-	// ===== end add_new_facet(facetList, p0, p1, p3) =====
-	printf("added second facet\n");
 
-	// ===== begin add_new_facet(facetList, p0, p2, p3) =====
-	currentFacet = &facetList[facetListSize];
-	A = p0;
-	B = p2;
-	C = p3;
-	set3u(currentFacet->points, A, B, C);
-	set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
-	sub3f(temp, pointList[A].pos, centroid.pos);
-	if (dot3f(currentFacet->normal, temp) < 0) {
-		negate3f_inplace(currentFacet->normal);
-		tempIndex = currentFacet->points[1];
-		currentFacet->points[1] = currentFacet->points[2];
-		currentFacet->points[2] = tempIndex;
+	for (int i = 0; i < facetListSize; i++) {
+		printf("Facet[%d] has %d exterior points\n", i, facetList[i].extPointSize);
 	}
-	currentFacet->active = true;
-	currentFacet->extPointList = nullptr;
-	currentFacet->extPointSize = 0;
-	facetListSize++;
-	// ===== end add_new_facet(facetList, p0, p2, p3) =====
-	printf("added third facet\n");
-
-	// ===== begin add_new_facet(facetList, p1, p2, p3) =====
-	currentFacet = &facetList[facetListSize];
-	A = p1;
-	B = p2;
-	C = p3;
-	set3u(currentFacet->points, A, B, C);
-	set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
-	sub3f(temp, pointList[A].pos, centroid.pos);
-	if (dot3f(currentFacet->normal, temp) < 0) {
-		negate3f_inplace(currentFacet->normal);
-		tempIndex = currentFacet->points[1];
-		currentFacet->points[1] = currentFacet->points[2];
-		currentFacet->points[2] = tempIndex;
-	}
-	currentFacet->active = true;
-	currentFacet->extPointList = nullptr;
-	currentFacet->extPointSize = 0;
-	facetListSize++;
-	// ===== end add_new_facet(facetList, p1, p2, p3) =====
-	printf("added fourth facet\n");
-
-	// Assign every remaining point to one of the four facets; the one it is farthest outside of
-	printf("beginning point assignment (not yet implemented)\n");
-
+	printf("Total interior points (discarded): %d\n", pointListSize - (facetList[0].extPointSize + facetList[1].extPointSize + facetList[2].extPointSize + facetList[3].extPointSize + 4));
 
 	// Main loop:
 	//  1. Take a facet that is both active and has exterior points
@@ -1431,14 +1403,13 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	for (size_t i = 0; i < facetListSize; i++) {
 		if (!facetList[i].active || facetList[i].extPointSize == 0) continue;
 		
+		// get farthest point
 		unsigned int p = facetList[i].extPointList[0];
 		float maxDist = 0;
 		for (size_t j = 0; j < facetList[i].extPointSize; j++) {
 
 		}
 	}
-
-
 
 
 
@@ -1495,6 +1466,13 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	convexHull->num_vertices = vertexIndex;
 	// ===== END MESH BUILDING =====
 
+	for (int i = 0; i < facetListSize; i++) {
+		if (facetList[i].extPointList != nullptr) {
+			free(facetList[i].extPointList);
+			facetList[i].extPointList = nullptr;
+			facetList[i].extPointSize = 0;
+		}
+	}
 	free(pointList);
 	free(facetList);
 	return convexHull;
