@@ -1309,6 +1309,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	maxDist = 0;
 	distance = 0;
 	for (int i = 0; i < pointListSize; i++) {
+		if (i == p0 || i == p1 || i == p2) continue;
 		sub3f(newSegment, pointList[i].pos, pointList[p0].pos);
 		distance = fabsf(dot3f(newSegment, temp));
 		if (distance > maxDist) {
@@ -1388,6 +1389,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 
 	for (int i = 0; i < facetListSize; i++) {
 		printf("Facet[%d] has %d exterior points\n", i, facetList[i].extPointSize);
+		facetList[i].extPointList = (unsigned int*)realloc(facetList[i].extPointList, facetList[i].extPointSize*sizeof(unsigned int));
 	}
 	printf("Total interior points (discarded): %d\n", pointListSize - (facetList[0].extPointSize + facetList[1].extPointSize + facetList[2].extPointSize + facetList[3].extPointSize + 4));
 
@@ -1401,14 +1403,31 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	printf("beginning main loop (not yet completed)\n");
 	int numActiveFacets = 4;
 	for (size_t i = 0; i < facetListSize; i++) {
+		printf(" >> selected facet[%u]\n", i);
 		if (!facetList[i].active || facetList[i].extPointSize == 0) continue;
 		
 		// get farthest point
 		unsigned int p = facetList[i].extPointList[0];
 		float maxDist = 0;
+		float dist;
 		for (size_t j = 0; j < facetList[i].extPointSize; j++) {
-
+			dist = dot3f(pointList[facetList[i].extPointList[j]].pos, facetList[i].normal) - facetList[i].offset;
+			if (dist > maxDist) {
+				maxDist = dist;
+				p = facetList[i].extPointList[j];
+			}
 		}
+		printf("    >> selected farthest point pointList[%u] = %.5f %.5f %.5f\n", i, p, pointList[p].pos[0], pointList[p].pos[1], pointList[p].pos[2]);
+		
+		for (size_t j = 0; j < facetListSize; j++) {
+			if (!facetList[j].active) continue;
+			if (dot3f(pointList[p].pos, facetList[j].normal) - facetList[j].offset > 0.0f) {
+				// face is visible
+			}
+		}
+
+
+		printf("");
 	}
 
 
