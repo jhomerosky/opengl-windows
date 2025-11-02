@@ -1168,26 +1168,53 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		unsigned int vertexIndex; // index of this point into the output vertex list
 		bool assigned; // if vertexIndex is assigned yet
 	};
+
+	struct IndexList {
+		unsigned int* items;
+		size_t length;
+		size_t capacity;
+	};
 	
 	// the literature calls these facets but they are just faces
 	struct Facet {
 		unsigned int points[3]; // index in a list of points
-
-		unsigned int* extPointList; // dynamic list of exterior point indices
-		size_t extPointSize;
-
 		float normal[3]; // normal facing outward
 		float offset; // plane = { x : n dot x = d }; d is the offset
 
-		int active; // instead of deleting, just mark as inactive
+		bool isNew; // this facet was newly created in the main loop
+		bool visible; // visible facets are marked for deletion
+		bool active; // instead of deleting, just mark as inactive
+		IndexList extPointListDA; // dynamic list of exterior point indices
 	};
+
+	// undef at end of this function
+	#define da_append(list, item) do {\
+		if (list.length >= list.capacity) {\
+			list.capacity = list.capacity == 0 ? 256 : list.capacity * 2;\
+			list.items = (decltype(list.items))realloc(list.items, list.capacity * sizeof(*list.items));\
+		}\
+		list.items[list.length++] = item;\
+	} while (0)\
+
+	// #define append_facet(facetList, A, B, C) do {\
+	// 	if (facetList.length >= facetList.capacity)\
+	// 		facetList.capacity = facetList.capacity == 0 ? 256 : facetList.capacity * 2;\
+	// 		facetList.items = (decltype(facetList.items))realloc(facetList.items, facetList.capacity * sizeof(*facetList.items));\
+	// 	}\
+	// 	Facet facet;\
+	// 	init_facet(&facet);\
+	// 	facet
+	// 	// build the facet from pts; NOTE: this might be a bit large for a macro, will come back later
+	// 	//facetList.items[facetList.length++] = item;\
+	// } while (0)\
 
 	// convexHull guaranteed to have size <= current size so we prealloc here and resize at the end
 	Point* pointList = (Point*)malloc(sizeof(Point) * mesh->num_vertices);
 	size_t pointListSize = 0;
 	
 	// ===== DEDUPLICATION PASS =====
-	const int BUCKET_SIZE = 10;
+	// TODO: evaluate use of map here instead of O(n^2) dedup
+	const int BUCKET_SIZE = 10; // prealloc bucket size for up to 10 collisions
 	struct HashNode {
 		Vertex* bucket[BUCKET_SIZE];
 		size_t bucket_next;
@@ -1238,6 +1265,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// list of facets used in convex hull, size may exceed cap and trigger realloc
 	size_t facetListSize = 0;
 	size_t facetListCap = mesh->num_faces;
+	
 	Facet* facetList = (Facet*)malloc(sizeof(Facet) * facetListCap);
 	if (!facetList) { fprintf(stderr, "Failed to malloc facetList in makeConvexHull\n"); free(pointList); return NULL; }
 
@@ -1280,41 +1308,52 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// distance(p, p1p2) = ||(p - p0) x (p1 - p0)|| / || p1 - p0 ||
 	//   but we can just check || (p - p0) x (p1 - p0) ||^2
 	p2 = 0;
-	float maxDist = 0;
-	float newSegment[3]; // p - p0
-	float segment[3]; // p1 - p0
-	float temp[3];
-	float distance;
-	sub3f(segment, pointList[p2].pos, pointList[p1].pos);
-	for (int i = 1; i < pointListSize; i++) {
-		if (i == p0 || i == p1) continue; // skip these points
-		sub3f(newSegment, pointList[i].pos, pointList[p0].pos);
-		cross3f(temp, newSegment, segment); // (p - p0) x (p1 - p0)
-		distance = dot3f(temp, temp);
-		if (distance > maxDist) {
-			p2 = i;
-			maxDist = distance;
+	float maxDist;
+	{
+		maxDist = 0;
+		float distance;
+		float newSegment[3]; // p - p0
+		float segment[3]; // p1 - p0
+		float cross_temp[3];
+		sub3f(segment, pointList[p2].pos, pointList[p1].pos);
+		for (int i = 1; i < pointListSize; i++) {
+			if (i == p0 || i == p1) continue; // skip these points
+			sub3f(newSegment, pointList[i].pos, pointList[p0].pos);
+			cross3f(cross_temp, newSegment, segment); // (p - p0) x (p1 - p0)
+			distance = dot3f(cross_temp, cross_temp);
+			if (distance > maxDist) {
+				p2 = i;
+				maxDist = distance;
+			}
 		}
 	}
 	printf("P2 = %.5f %.5f %.5f with maxVal=%.5f\n", pointList[p2].pos[0], pointList[p2].pos[1], pointList[p2].pos[2], maxDist);
-
+	
 	// step 3: find point farthest in perpendicular distance from normal
-	// normal(p1p2p3) = normalize((p3 - p1) x (p2 - p1))
-	// distance(p, p1p2p3) = abs( (p3 - p1) . (normal) ) 
-	sub3f(newSegment, pointList[p2].pos, pointList[p0].pos);
-	sub3f(segment, pointList[p1].pos, pointList[p0].pos);
-	cross3f(temp, newSegment, segment);
-	normalize3f_inplace(temp); // this is a normal vector to the p1p2p3 triangle
-	p3 = 0;
-	maxDist = 0;
-	distance = 0;
-	for (int i = 0; i < pointListSize; i++) {
-		if (i == p0 || i == p1 || i == p2) continue;
-		sub3f(newSegment, pointList[i].pos, pointList[p0].pos);
-		distance = fabsf(dot3f(newSegment, temp));
-		if (distance > maxDist) {
-			p3 = i;
-			maxDist = distance;
+	// normal(p1p2p3) = normalize((p2 - p0) x (p1 - p0))
+	// distance(p, p1p2p3) = abs( (p2 - p0) . (normal) ) 
+	{
+		maxDist = 0;
+		float distance;
+		float segP0P2[3];
+		float segP0P1[3];
+		float normal[3];
+		float segP0Pi[3];
+		sub3f(segP0P2, pointList[p2].pos, pointList[p0].pos);
+		sub3f(segP0P1, pointList[p1].pos, pointList[p0].pos);
+		cross3f(normal, segP0P2, segP0P1);
+		normalize3f_inplace(normal); // this is a normal vector to the p1p2p3 triangle
+		p3 = 0;
+		maxDist = 0;
+		distance = 0;
+		for (int i = 0; i < pointListSize; i++) {
+			if (i == p0 || i == p1 || i == p2) continue;
+			sub3f(segP0Pi, pointList[i].pos, pointList[p0].pos);
+			distance = fabsf(dot3f(segP0Pi, normal));
+			if (distance > maxDist) {
+				p3 = i;
+				maxDist = distance;
+			}
 		}
 	}
 	printf("P3 = %.5f %.5f %.5f with maxVal=%.5f\n", pointList[p3].pos[0], pointList[p3].pos[1], pointList[p3].pos[2], maxDist);
@@ -1338,6 +1377,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			{p0, p2, p3},
 			{p1, p2, p3}
 		};
+		float centroidToA[3];
 		Facet* currentFacet;
 		unsigned int A, B, C;
 		for (int i = 0; i < 4; i++) {
@@ -1348,16 +1388,17 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			set3u(currentFacet->points, A, B, C);
 			set_triangle_normal(currentFacet->normal, pointList[A].pos, pointList[B].pos, pointList[C].pos);
 			// if normal . (A - centroid) < 0, then our normal points inward so reorient the triangle
-			sub3f(temp, pointList[A].pos, centroid.pos);
-			if (dot3f(currentFacet->normal, temp) < 0) {
+			sub3f(centroidToA, pointList[A].pos, centroid.pos);
+			if (dot3f(currentFacet->normal, centroidToA) < 0) {
 				negate3f_inplace(currentFacet->normal);
 				currentFacet->points[1] = C;
 				currentFacet->points[2] = B;
 			}
 			currentFacet->offset = dot3f(currentFacet->normal, pointList[A].pos);
-			currentFacet->active = true;	
-			currentFacet->extPointList = (unsigned int*)malloc(pointListSize*sizeof(unsigned int));
-			currentFacet->extPointSize = 0;
+			currentFacet->isNew = false;
+			currentFacet->visible = false;
+			currentFacet->active = true;
+			currentFacet->extPointListDA = { NULL, 0, 0 };
 			facetListSize++;
 		}
 	}
@@ -1379,19 +1420,17 @@ Mesh* makeConvexHull(Mesh* mesh) {
 					assignedFacet = &facetList[j];
 				}
 			}
-			// if we are not an interior point
+			// assign the point
 			if (assignedFacet != nullptr) {
-				assignedFacet->extPointList[assignedFacet->extPointSize] = i;
-				assignedFacet->extPointSize++;
+				da_append(assignedFacet->extPointListDA, i);
 			}
 		}
 	}
 
 	for (int i = 0; i < facetListSize; i++) {
-		printf("Facet[%d] has %d exterior points\n", i, facetList[i].extPointSize);
-		facetList[i].extPointList = (unsigned int*)realloc(facetList[i].extPointList, facetList[i].extPointSize*sizeof(unsigned int));
+		printf("Facet[%d] has %d exterior points\n", i, facetList[i].extPointListDA.length);
 	}
-	printf("Total interior points (discarded): %d\n", pointListSize - (facetList[0].extPointSize + facetList[1].extPointSize + facetList[2].extPointSize + facetList[3].extPointSize + 4));
+	printf("Total interior points (discarded): %d\n", pointListSize - (facetList[0].extPointListDA.length + facetList[1].extPointListDA.length + facetList[2].extPointListDA.length + facetList[3].extPointListDA.length + 4));
 
 	// Main loop:
 	//  1. Take a facet that is both active and has exterior points
@@ -1404,26 +1443,41 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	int numActiveFacets = 4;
 	for (size_t i = 0; i < facetListSize; i++) {
 		printf(" >> selected facet[%u]\n", i);
-		if (!facetList[i].active || facetList[i].extPointSize == 0) continue;
+		if (!facetList[i].active || facetList[i].extPointListDA.length == 0) continue;
 		
 		// get farthest point
-		unsigned int p = facetList[i].extPointList[0];
+		unsigned int p = facetList[i].extPointListDA.items[0];
 		float maxDist = 0;
 		float dist;
-		for (size_t j = 0; j < facetList[i].extPointSize; j++) {
-			dist = dot3f(pointList[facetList[i].extPointList[j]].pos, facetList[i].normal) - facetList[i].offset;
+		for (size_t j = 0; j < facetList[i].extPointListDA.length; j++) {
+			dist = dot3f(pointList[facetList[i].extPointListDA.items[j]].pos, facetList[i].normal) - facetList[i].offset;
 			if (dist > maxDist) {
 				maxDist = dist;
-				p = facetList[i].extPointList[j];
+				p = facetList[i].extPointListDA.items[j];
 			}
 		}
 		printf("    >> selected farthest point pointList[%u] = %.5f %.5f %.5f\n", i, p, pointList[p].pos[0], pointList[p].pos[1], pointList[p].pos[2]);
 		
+		// visibility check
 		for (size_t j = 0; j < facetListSize; j++) {
 			if (!facetList[j].active) continue;
 			if (dot3f(pointList[p].pos, facetList[j].normal) - facetList[j].offset > 0.0f) {
-				// face is visible
+				facetList[j].visible = true;
 			}
+		}
+
+		// horizon edge check
+		//   For each visible facet:
+		//      For each edge of facet:
+		//          If facet across edge is not visible, then this is a horizon edge
+		//          NOTE: facet across edge will be oriented opposite (facet1: (AB) --> facet2: (BA))
+		//   For all horizon edges (points X, Y): Form new facet (X, Y, P) with correct orientation
+		//   Distribute all exterior points from visible facets to the newly created facets
+		//   Facets marked as visible (and thus have no exterior points) will be marked inactive
+		for (size_t j = 0; j < facetListSize; j++) {
+			if (!facetList[j].active || !facetList[j].visible) continue;
+			
+			// check if edge
 		}
 
 
@@ -1486,12 +1540,14 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// ===== END MESH BUILDING =====
 
 	for (int i = 0; i < facetListSize; i++) {
-		if (facetList[i].extPointList != nullptr) {
-			free(facetList[i].extPointList);
-			facetList[i].extPointList = nullptr;
-			facetList[i].extPointSize = 0;
+		if (facetList[i].extPointListDA.items != NULL) {
+			free(facetList[i].extPointListDA.items);
+			facetList[i].extPointListDA = {NULL, 0, 0};
 		}
 	}
+
+	#undef da_append
+
 	free(pointList);
 	free(facetList);
 	return convexHull;
