@@ -1181,6 +1181,8 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		float normal[3]; // normal facing outward
 		float offset; // plane = { x : n dot x = d }; d is the offset
 
+		unsigned int adjacent[3]; // // facetList[this.adjacent[i]] is the facet which shares the ridge that is opposite to this.points[i]
+
 		bool isNew; // this facet was newly created in the main loop
 		bool visible; // visible facets are marked for deletion
 		bool active; // instead of deleting, just mark as inactive
@@ -1401,6 +1403,29 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			currentFacet->extPointListDA = { NULL, 0, 0 };
 			facetListSize++;
 		}
+		
+		// assign adjacent facets
+ 		// facet[0] = {p0, p1, p2},
+ 		// facet[1] = {p0, p1, p3},
+ 		// facet[2] = {p0, p2, p3},
+ 		// facet[3] = {p1, p2, p3}
+
+		// facetList[this.adjacent[i]] is the facet which shares the ridge that is opposite to this.points[i]
+		facetList[0].adjacent[0] = 3;
+		facetList[0].adjacent[1] = 2;
+		facetList[0].adjacent[2] = 1;
+
+		facetList[1].adjacent[0] = 3;
+		facetList[1].adjacent[1] = 2;
+		facetList[1].adjacent[2] = 0;
+
+		facetList[2].adjacent[0] = 3;
+		facetList[2].adjacent[1] = 1;
+		facetList[2].adjacent[2] = 0;
+
+		facetList[3].adjacent[0] = 2;
+		facetList[3].adjacent[1] = 1;
+		facetList[3].adjacent[2] = 0;
 	}
 
 	// Assign every remaining point to the facet (of the original 4) which it is farthest outside of, if it is outside
@@ -1474,14 +1499,47 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		//   For all horizon edges (points X, Y): Form new facet (X, Y, P) with correct orientation
 		//   Distribute all exterior points from visible facets to the newly created facets
 		//   Facets marked as visible (and thus have no exterior points) will be marked inactive
+
+		// after some thought, here is the idea: (no explicit ridge struct)
+		//   Facets store ptr to adjacent facet (facet.adjacent[i] is facet sharing ridge opposite point i)
+		//   on initial simplex, facet adjacency is populated manually
+		//     loop active facets: (at each iteration, adjacency data is correct)
+		//       on nonvisible facet --> nothing
+		//       on visible facet:
+		//		   facet.adjacent[i] is not visible --> nothing
+		//         facet.adjacent[i] is visible --> shared ridge is horizon edge with pts (A,B)
+		//           build newFacet(A,B,P), point facet.adjacent[i].adjacent[j] = newFacet where j is index not owned by A or B inside adjacent facet
+		//           set newFacet.new = true;
+		//     loop newFacets:
+		// 	     hydrate adjacency on the vertical ridges to P; can force orientation (take point P and point prior to P in the facet.points list as the ridge)
+		//     loop visible oldFacets (now this is a marking for deletion):
+		//       oldFacet.active = false; 
+
 		for (size_t j = 0; j < facetListSize; j++) {
 			if (!facetList[j].active || !facetList[j].visible) continue;
-			
-			// check if edge
+			for (int k = 0; k < 3; k++) {
+				if (facetList[facetList[j].adjacent[k]].visible) {
+					// newFacet(A,B,P);
+					// newFacet.new = true;
+					// newFacet.adjacency[newFacet.points.indexOf(P)] = facetList[facetList[j].adjacent[k]];
+					// facetList[facetList[j].adjacent[k]].adjacent[???] = facetList.indexOf(newFacet);
+				}
+			}
 		}
 
+		for (size_t j = 0; j < facetListSize; j++) {
+			if (facetList[j].visible) {
+				// facetList[j].active = false;
+			} else if (facetList[j].isNew) {
+				// find k = index before P (mod 3) in facetList[j].points
+				// facetList[j].adjacent[k] = ??? how do we find this efficiently?
+				// facetList[???].adjacent[???] = j;
+				// facetList[j].isNew = false;
+				// facetList[j].active = true;
+			}
+		}
 
-		printf("");
+		printf("iteration %u complete\n", i);
 	}
 
 
