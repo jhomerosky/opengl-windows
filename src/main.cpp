@@ -1305,6 +1305,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// ===== END DEDUP PASS =====
 
 	// ===== BEGIN QUICKHULL =====
+	// TODO: benchmark quickhull vs the rest of makeConvexHull
 	printf("(CONVEX HULL): >> BEGIN QUICKHULL\n");
 	// list of facets used in convex hull, size may exceed cap and trigger realloc
 	size_t facetListSize = 0;
@@ -1340,18 +1341,9 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			if (pointList[i].pos[1] > pointList[maxY].pos[1]) maxY = i;
 			if (pointList[i].pos[2] > pointList[maxZ].pos[2]) maxZ = i;
 		}
-		//printf("minX = %.5f %.5f %.5f\n", pointList[minX].pos[0], pointList[minX].pos[1], pointList[minX].pos[2]);
-		//printf("maxX = %.5f %.5f %.5f\n", pointList[maxX].pos[0], pointList[maxX].pos[1], pointList[maxX].pos[2]);
-		//printf("minY = %.5f %.5f %.5f\n", pointList[minY].pos[0], pointList[minY].pos[1], pointList[minY].pos[2]);
-		//printf("maxY = %.5f %.5f %.5f\n", pointList[maxY].pos[0], pointList[maxY].pos[1], pointList[maxY].pos[2]);
-		//printf("minZ = %.5f %.5f %.5f\n", pointList[minZ].pos[0], pointList[minZ].pos[1], pointList[minZ].pos[2]);
-		//printf("maxZ = %.5f %.5f %.5f\n", pointList[maxZ].pos[0], pointList[maxZ].pos[1], pointList[maxZ].pos[2]);
 		p0 = minX;
 		p1 = maxX;
 	}
-	//printf("P0 = %.5f %.5f %.5f\n", pointList[p0].pos[0], pointList[p0].pos[1], pointList[p0].pos[2]);
-	//printf("P1 = %.5f %.5f %.5f\n", pointList[p1].pos[0], pointList[p1].pos[1], pointList[p1].pos[2]);
-
 
 	// step 2: find point farthest in perpendicular distance from segment (p0p1)
 	// distance(p, p1p2) = ||(p - p0) x (p1 - p0)|| / || p1 - p0 ||
@@ -1376,7 +1368,6 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			}
 		}
 	}
-	//printf("P2 = %.5f %.5f %.5f with maxVal=%.5f\n", pointList[p2].pos[0], pointList[p2].pos[1], pointList[p2].pos[2], maxDist);
 	
 	// step 3: find point farthest in perpendicular distance from normal
 	// normal(p1p2p3) = normalize((p2 - p0) x (p1 - p0))
@@ -1405,7 +1396,6 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			}
 		}
 	}
-	//printf("P3 = %.5f %.5f %.5f with maxVal=%.5f\n", pointList[p3].pos[0], pointList[p3].pos[1], pointList[p3].pos[2], maxDist);
 
 	// Compute centroid to orient direction of normals away from center
 	Point centroid;
@@ -1414,7 +1404,6 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	add3f(centroid.pos, centroid.pos, pointList[p2].pos);
 	add3f(centroid.pos, centroid.pos, pointList[p3].pos);
 	mult3f(centroid.pos, centroid.pos, 0.25f);
-	//printf("Centroid = %.5f %.5f %.5f\n", centroid.pos[0], centroid.pos[1], centroid.pos[2]);
 
 	// set initial faces for tetrahedron
 	// Note: Use macro function because we are defining the structs inside this function.
@@ -1437,31 +1426,6 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			facetList[i].isNew = false;
 			facetList[i].isActive = true;
 		}
-		
-		/* adjacency implementation
-		// assign adjacent facets
- 		// facet[0] = {p0, p1, p2},
- 		// facet[1] = {p0, p1, p3},
- 		// facet[2] = {p0, p2, p3},
- 		// facet[3] = {p1, p2, p3}
-
-		// facetList[this.adjacent[i]] is the facet which shares the ridge that is opposite to this.points[i]
-		facetList[0].adjacent[0] = 3;
-		facetList[0].adjacent[1] = 2;
-		facetList[0].adjacent[2] = 1;
-
-		facetList[1].adjacent[0] = 3;
-		facetList[1].adjacent[1] = 2;
-		facetList[1].adjacent[2] = 0;
-
-		facetList[2].adjacent[0] = 3;
-		facetList[2].adjacent[1] = 1;
-		facetList[2].adjacent[2] = 0;
-
-		facetList[3].adjacent[0] = 2;
-		facetList[3].adjacent[1] = 1;
-		facetList[3].adjacent[2] = 0;
-		*/
 	}
 
 	// Assign every remaining point to the facet (of the original 4) which it is farthest outside of, if it is outside
