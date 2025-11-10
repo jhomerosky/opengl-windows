@@ -1328,18 +1328,10 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// step 1: take min/max along X
 	{
 		unsigned int minX = 0;
-		unsigned int minY = 0;
-		unsigned int minZ = 0;
 		unsigned int maxX = 0;
-		unsigned int maxY = 0;
-		unsigned int maxZ = 0;
 		for (int i = 1; i < pointListSize; i++) {
 			if (pointList[i].pos[0] < pointList[minX].pos[0]) minX = i;
-			if (pointList[i].pos[1] < pointList[minY].pos[1]) minY = i;
-			if (pointList[i].pos[2] < pointList[minZ].pos[2]) minZ = i;
 			if (pointList[i].pos[0] > pointList[maxX].pos[0]) maxX = i;
-			if (pointList[i].pos[1] > pointList[maxY].pos[1]) maxY = i;
-			if (pointList[i].pos[2] > pointList[maxZ].pos[2]) maxZ = i;
 		}
 		p0 = minX;
 		p1 = maxX;
