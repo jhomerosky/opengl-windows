@@ -5,15 +5,28 @@
 unsigned int getSeed();
 float randf();
 static inline float radiansf(float degrees);
+static inline float degreesf(float radians);
 static inline int isNumber(const char *str);
-static inline void set3f(float v[3], const float v0, const float v1, const float v2);
-static inline void set4f(float v[4], const float v0, const float v1, const float v2, const float v3);
+static inline void set3u(unsigned int out[3], const unsigned int n0, const unsigned int n1, const unsigned int n2);
+static inline void set3uv(unsigned int out[3], const unsigned int in[3]);
+static inline void set3i(int out[3], const int n0, const int n1, const int n2);
+static inline void set3iv(int out[3], const int in[3]);
+static inline void set3f(float out[3], const float f0, const float f1, const float f2);
+static inline void set3fv(float out[3], const float in[3]);
+static inline void set4f(float out[4], const float f0, const float f1, const float f2, const float f3);
+static inline void set4fv(float out[4], const float in[4]);
 static inline float maxf(float a, float b);
+static inline int maxi(int a, int b);
 static inline float dot3f(const float u[3], const float v[3]);
 static inline float dot4f(const float u[4], const float v[4]);
+static inline float fast_rsqrt(float number);
 static inline void quat_mult(float p[4], float q[4], float res[4]);
+static inline void negate3f_inplace(float out[3]);
+static inline void add3f(float out[3], const float v1[3], const float v2[3]);
+static inline void sub3f(float out[3], const float v1[3], const float v2[3]);
+static inline void mult3f(float out[3], const float in[3], const float factor);
 static inline void cross3f(float out[3], const float v1[3], const float v2[3]);
-static inline void normalize_in_place3f(float v[3]);
+static inline void normalize3f_inplace(float v[3]);
 static inline bool equals3f(const float v1[3], const float v2[3], const float eps);
 static inline void mat4_mul(float out[16], const float A[16], const float B[16]);
 static inline void set_perspective_mat(float out[16], const float fovy, const float aspect, const float near, const float far);
@@ -22,6 +35,8 @@ static inline void set_translate_mat(float out[16], const float pos[3]);
 static inline void set_rotation_mat(float out[16], const float quat[4]);
 static inline void set_scale_mat(float out[16], const float scale[3]);
 static inline void set_normal_mat(float out[9], const float rotate[16], const float scale[3]);
+static inline void remove_translation_mat4(float mat[16]);
+static inline void set_triangle_normal(float out[3], const float A[3], const float B[3], const float C[3]);
 // ===== end header =====
 
 // get a seed for the srand function
@@ -51,6 +66,35 @@ static inline bool equals3f(const float v1[3], const float v2[3], const float ep
 	);
 }
 
+// out = -out
+static inline void negate3f_inplace(float out[3]) {
+	out[0] = -out[0];
+	out[1] = -out[1];
+	out[2] = -out[2];
+}
+
+// out = v1 + v2, safe to use A = A + B
+static inline void add3f(float out[3], const float v1[3], const float v2[3]) {
+	out[0] = v1[0] + v2[0];
+	out[1] = v1[1] + v2[1];
+	out[2] = v1[2] + v2[2];
+}
+
+// out = v1 - v2; safe to use A = A - B
+static inline void sub3f(float out[3], const float v1[3], const float v2[3]) {
+	out[0] = v1[0] - v2[0];
+	out[1] = v1[1] - v2[1];
+	out[2] = v1[2] - v2[2];
+}
+
+// out = in * factor; safe to use A = A*factor
+static inline void mult3f(float out[3], const float in[3], const float factor) {
+	out[0] = in[0]*factor;
+	out[1] = in[1]*factor;
+	out[2] = in[2]*factor;
+}
+
+// out = v1 cross v2; not safe for A = A cross B
 static inline void cross3f(float out[3], const float v1[3], const float v2[3]) {
     out[0] = v1[1] * v2[2] - v1[2] * v2[1];
     out[1] = v1[2] * v2[0] - v1[0] * v2[2];
@@ -92,9 +136,26 @@ static inline void quat_rotate_in_place(float orientation[4], float rotation[4])
 	quat_mult(rotation, temp, orientation);
 }
 
+// quake 3 fast inv sqrt
+// this is probably not optimal on modern hardware, but it's here for fun
+static inline float fast_rsqrt(float number) {
+    long i;
+    float x2, y;
+    const float threehalfs = 1.5F;
+
+    x2 = number * 0.5F;
+    y  = number;
+    i  = *(long*)&y;             // treat float bits as int
+    i  = 0x5f3759df - (i >> 1);  // magic
+    y  = *(float*)&i;
+    y  = y * (threehalfs - (x2 * y * y)); // 1 NR iteration
+    return y;
+}
+
 // does not check for 0 vector
-static inline void normalize_in_place3f(float v[3]) {
+static inline void normalize3f_inplace(float v[3]) {
     float norm_factor = 1.0f / sqrtf(dot3f(v, v));
+	//float norm_factor = fast_rsqrt(dot3f(v,v));
     v[0] *= norm_factor;
     v[1] *= norm_factor;
     v[2] *= norm_factor;
@@ -104,26 +165,41 @@ static inline float maxf(float a, float b) {
 	return b < a ? a : b;
 }
 
-static inline float radiansf(float degrees) { return degrees * 0.01745329251994329576923690768489f; }
+static inline int maxi(int a, int b) {
+	return b < a ? a : b;
+}
 
-static inline void set3f(float v[3], const float v0, const float v1, const float v2) { v[0] = v0; v[1] = v1; v[2] = v2; }
-static inline void set4f(float v[4], const float v0, const float v1, const float v2, const float v3) { v[0] = v0; v[1] = v1; v[2] = v2; v[3] = v3; }
+static inline float radiansf(float degrees) { return degrees * 0.01745329251994329576923690768489f; }
+static inline float degreesf(float radians) { return radians * 57.295779513082320876798154814105f; }
+
+// vector setting
+static inline void set3u(unsigned int out[3], const unsigned int n0, const unsigned int n1, const unsigned int n2) { out[0] = n0; out[1] = n1; out[2] = n2; }
+static inline void set3uv(unsigned int out[3], const unsigned int in[3]) { memcpy(out, in, 3*sizeof(unsigned int)); }
+
+static inline void set3i(int out[3], const int n0, const int n1, const int n2) { out[0] = n0; out[1] = n1; out[2] = n2; }
+static inline void set3iv(int out[3], const int in[3]) { memcpy(out, in, 3*sizeof(int)); }
+
+static inline void set3f(float out[3], const float f0, const float f1, const float f2) { out[0] = f0; out[1] = f1; out[2] = f2; }
+static inline void set3fv(float out[3], const float in[3]) { memcpy(out, in, 3*sizeof(float)); }
+
+static inline void set4f(float out[4], const float f0, const float f1, const float f2, const float f3) { out[0] = f0; out[1] = f1; out[2] = f2; out[3] = f3; }
+static inline void set4fv(float out[4], const float in[4]) { memcpy(out, in, 4*sizeof(float)); }
 
 // mat4_mul(out, A, B) --> out = AB (safe for A=AB)
 static inline void mat4_mul(float out[16], const float A[16], const float B[16]) {
 	float temp[16];
-	temp[0]  = A[0]*B[0]  + A[4]*B[1]  + A[8]*B[2]  + A[12]*B[3];
-	temp[1]  = A[1]*B[0]  + A[5]*B[1]  + A[9]*B[2]  + A[13]*B[3];
-	temp[2]  = A[2]*B[0]  + A[6]*B[1]  + A[10]*B[2] + A[14]*B[3];
-	temp[3]  = A[3]*B[0]  + A[7]*B[1]  + A[11]*B[2] + A[15]*B[3];
+	temp[0]  = A[0]*B[0]  + A[4]*B[1]  + A[8]*B[2]   + A[12]*B[3];
+	temp[1]  = A[1]*B[0]  + A[5]*B[1]  + A[9]*B[2]   + A[13]*B[3];
+	temp[2]  = A[2]*B[0]  + A[6]*B[1]  + A[10]*B[2]  + A[14]*B[3];
+	temp[3]  = A[3]*B[0]  + A[7]*B[1]  + A[11]*B[2]  + A[15]*B[3];
 
-	temp[4]  = A[0]*B[4]  + A[4]*B[5]  + A[8]*B[6]  + A[12]*B[7];
-	temp[5]  = A[1]*B[4]  + A[5]*B[5]  + A[9]*B[6]  + A[13]*B[7];
-	temp[6]  = A[2]*B[4]  + A[6]*B[5]  + A[10]*B[6] + A[14]*B[7];
-	temp[7]  = A[3]*B[4]  + A[7]*B[5]  + A[11]*B[6] + A[15]*B[7];
+	temp[4]  = A[0]*B[4]  + A[4]*B[5]  + A[8]*B[6]   + A[12]*B[7];
+	temp[5]  = A[1]*B[4]  + A[5]*B[5]  + A[9]*B[6]   + A[13]*B[7];
+	temp[6]  = A[2]*B[4]  + A[6]*B[5]  + A[10]*B[6]  + A[14]*B[7];
+	temp[7]  = A[3]*B[4]  + A[7]*B[5]  + A[11]*B[6]  + A[15]*B[7];
 
-	temp[8]  = A[0]*B[8]  + A[4]*B[9]  + A[8]*B[10] + A[12]*B[11];
-	temp[9]  = A[1]*B[8]  + A[5]*B[9]  + A[9]*B[10] + A[13]*B[11];
+	temp[8]  = A[0]*B[8]  + A[4]*B[9]  + A[8]*B[10]  + A[12]*B[11];
+	temp[9]  = A[1]*B[8]  + A[5]*B[9]  + A[9]*B[10]  + A[13]*B[11];
 	temp[10] = A[2]*B[8]  + A[6]*B[9]  + A[10]*B[10] + A[14]*B[11];
 	temp[11] = A[3]*B[8]  + A[7]*B[9]  + A[11]*B[10] + A[15]*B[11];
 
@@ -131,7 +207,7 @@ static inline void mat4_mul(float out[16], const float A[16], const float B[16])
 	temp[13] = A[1]*B[12] + A[5]*B[13] + A[9]*B[14]  + A[13]*B[15];
 	temp[14] = A[2]*B[12] + A[6]*B[13] + A[10]*B[14] + A[14]*B[15];
 	temp[15] = A[3]*B[12] + A[7]*B[13] + A[11]*B[14] + A[15]*B[15];
-	for (int i = 0; i < 16; i++) out[i] = temp[i];
+	memcpy(out, temp, sizeof(float)*16);
 }
 
 // build perspective matrix, which is a type of projection matrix
@@ -181,11 +257,11 @@ static inline void set_lookat_mat(float out[16], const float eye[3], const float
 
 	// build f
 	set3f(f, front[0], front[1], front[2]);
-	normalize_in_place3f(f);
+	normalize3f_inplace(f);
 
 	// build r
 	cross3f(r, f, up);
-	normalize_in_place3f(r);
+	normalize3f_inplace(r);
 
 	// build u. right and forward are orthogonal unit vectors so no need to normalize the cross product
 	cross3f(u, r, f);
@@ -271,8 +347,8 @@ static inline void set_scale_mat(float out[16], const float scale[3]) {
 //   Translate can be ignored since normals are not affected by it:
 //       mat3((TRS)^(-T)) = mat3(T^(-T)(RS)^(-T)) = mat3(T^(-T))mat3((RS)^(-T)) where mat3(T^(-T)) = I
 //   Rotate is orthogonal -> inverse is equal to the transpose
-//   Scale is diagonal -> inverse is elementwise inverse down the diag; its transpose is identical; Mult is easy
-//       Model^(-T) = (Rotate*Scale)^(-T) = (Scale^(-1) * Rotate^(T))^T = Rotate * Scale^(-1)
+//   Scale is diagonal -> inverse is easy; transpose is identical; mult is easy
+//       Model^(-T) = (Rotate*Scale)^(-T) = Rotate^(-T)Scale^(-T) = Rotate * Scale^(-1)
 static inline void set_normal_mat(float out[9], const float rotate[16], const float scale[3]) {
 	float sxInv = 1/scale[0];
 	float syInv = 1/scale[1];
@@ -289,6 +365,27 @@ static inline void set_normal_mat(float out[9], const float rotate[16], const fl
 	out[6] = rotate[8]*szInv;
 	out[7] = rotate[9]*szInv;
 	out[8] = rotate[10]*szInv;
+}
+
+// this removes the translation component of a 4x4 mat; similar to glm::mat4(glm::mat3(my_matrix))
+static inline void remove_translation_mat4(float mat[16]) {
+	mat[3] = 0.0f;
+	mat[7] = 0.0f;
+	mat[11] = 0.0f;
+	mat[12] = 0.0f;
+	mat[13] = 0.0f;
+	mat[14] = 0.0f;
+	mat[15] = 1.0f;
+}
+
+// Given a triangle A, B, C, return the unit normal vector (B-A) x (C-B)
+static inline void set_triangle_normal(float out[3], float A[3], float B[3], float C[3]) {
+	float seg1[3];
+	float seg2[3];
+	sub3f(seg1, B, A);
+	sub3f(seg2, C, B);
+	cross3f(out, seg1, seg2);
+	normalize3f_inplace(out);
 }
 
 #define __my_math__

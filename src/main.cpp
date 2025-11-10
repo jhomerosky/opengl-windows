@@ -18,7 +18,6 @@
 // ===== GLOBAL VARS =====
 ResourcePool global_resource_pool;
 Scene global_scene;
-
 // ===== END GLOBAL VARS =====
 
 // ===== CALLBACK FUNCTIONS =====
@@ -54,18 +53,18 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 		camera->pitch = -89.0f;
 
 	float direction[3];
-	camera->front[0] = cos(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
-	camera->front[1] = sin(radiansf(camera->pitch));
-	camera->front[2] = sin(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
-	normalize_in_place3f(camera->front);
+	camera->front[0] = cosf(radiansf(camera->yaw)) * cosf(radiansf(camera->pitch));
+	camera->front[1] = sinf(radiansf(camera->pitch));
+	camera->front[2] = sinf(radiansf(camera->yaw)) * cosf(radiansf(camera->pitch));
+	normalize3f_inplace(camera->front);
 }
 // ===== END CALLBACK FUNCTIONS =====
 
 
 
-// hashing stragegy: hash = x * prime1 ^ y * prime2 ^ z * prime3
+// hashing strategy: hash = x * prime1 ^ y * prime2 ^ z * prime3
 // (x,y,z) = (int)((x,y,z) * 1e5)
-static inline unsigned long long vertexHash(Vertex* vertex, const int decimalFilter) {
+static inline unsigned long long float3Hash(const float in[3], const int decimalFilter) {
 
 	// 1.1234567 * 1e5 = 112345.67 --> 112345
 	// 1.1234587 * 1e5 = 112345.87 --> 112345
@@ -73,14 +72,19 @@ static inline unsigned long long vertexHash(Vertex* vertex, const int decimalFil
 	const long long primes[3] = {19349669, 83492791, 73856093};
 	//const int primes[3] = {113, 569, 877};
 	const long long vecints[3] = {
-		(long long)(vertex->pos[0] * decimalFilter),
-		(long long)(vertex->pos[1] * decimalFilter),
-		(long long)(vertex->pos[2] * decimalFilter)
+		(long long)(in[0] * decimalFilter),
+		(long long)(in[1] * decimalFilter),
+		(long long)(in[2] * decimalFilter)
 	};
 	return (primes[0] * vecints[0]) ^ (primes[1] * vecints[1]) ^ (primes[2] * vecints[2]);
 }
 
-// @ASSUMING: vertices are deduplicated
+// hash pair of uint32_t into one uint64_t
+static inline uint64_t hash_pair(const uint32_t a, const uint32_t b) {
+	return ((uint64_t)a << 32) | (uint64_t)b;
+}
+
+// @NOTE: assumes vertices are deduplicated
 // compute each face's normal vector, add vnormal to each component vector, normalize all vectors
 int compute_vnormal_smooth(Mesh* mesh) {
 	printf("  computing vnormal smooth\n");
@@ -90,38 +94,28 @@ int compute_vnormal_smooth(Mesh* mesh) {
 		float e2[3];
 		float res[3];
 		// vertices
-		const Vertex v0 = mesh->vertices[mesh->faces[i].vertexId[0]];
-		const Vertex v1 = mesh->vertices[mesh->faces[i].vertexId[1]];
-		const Vertex v2 = mesh->vertices[mesh->faces[i].vertexId[2]];
-		// e1
-		e1[0] = v1.pos[0] - v0.pos[0];
-		e1[1] = v1.pos[1] - v0.pos[1];
-		e1[2] = v1.pos[2] - v0.pos[2];
-		// e2
-		e2[0] = v2.pos[0] - v1.pos[0];
-		e2[1] = v2.pos[1] - v1.pos[1];
-		e2[2] = v2.pos[2] - v1.pos[2];
+		Vertex *v0 = &(mesh->vertices[mesh->faces[i].vertexId[0]]);
+		Vertex *v1 = &(mesh->vertices[mesh->faces[i].vertexId[1]]);
+		Vertex *v2 = &(mesh->vertices[mesh->faces[i].vertexId[2]]);
+		
+		// edges of triangle
+		sub3f(e1, v1->pos, v0->pos);
+		sub3f(e2, v2->pos, v1->pos);
 
-		// cross product will not be near 0 because we are using edges of a triangle
+		// get normal of triangle
 		cross3f(res, e1, e2);
 
 		// add this face's vnormal to each vertex in the face
-		mesh->vertices[mesh->faces[i].vertexId[0]].normal[0] += res[0];
-		mesh->vertices[mesh->faces[i].vertexId[0]].normal[1] += res[1];
-		mesh->vertices[mesh->faces[i].vertexId[0]].normal[2] += res[2];
-
-		mesh->vertices[mesh->faces[i].vertexId[1]].normal[0] += res[0];
-		mesh->vertices[mesh->faces[i].vertexId[1]].normal[1] += res[1];
-		mesh->vertices[mesh->faces[i].vertexId[1]].normal[2] += res[2];
-
-		mesh->vertices[mesh->faces[i].vertexId[2]].normal[0] += res[0];
-		mesh->vertices[mesh->faces[i].vertexId[2]].normal[1] += res[1];
-		mesh->vertices[mesh->faces[i].vertexId[2]].normal[2] += res[2];
+		// these should all face relatively same direction so we don't norm a 0 vector
+		add3f(v0->normal, v0->normal, res);
+		add3f(v1->normal, v1->normal, res);
+		add3f(v2->normal, v2->normal, res);
 	}
-	// normalize every vertex's vnormal; @NOTE: is this bottlenecked by thread perf or by cache?
+	// normalize every vertex's vnormal;
+	// @NOTE: Benchmark shows omp threads speeds this up but simd does not
 	#pragma omp parallel for
 	for (int i = 0; i < mesh->num_vertices; i++) {
-		normalize_in_place3f(mesh->vertices[i].normal);
+		normalize3f_inplace(mesh->vertices[i].normal);
 	}
 	mesh->has_normals = true;
 	return 0;
@@ -146,7 +140,7 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	size_t map_size = mesh->num_faces/2;
 	HashNode** map = (HashNode**)calloc(map_size, sizeof(HashNode*));
 	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces); // upper bound size, resize later
-	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in deduplicate_mesh_vertices\n"); return -1; }
+	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in deduplicate_mesh_vertices\n"); free(map); return -1; }
 	unsigned int vertex_index = 0;
 
 	for (int i = 0; i < mesh->num_faces; i++) {
@@ -154,7 +148,7 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 		for (int j = 0; j < 3; j++) {
 			// hash each vertex
 			Vertex* v = &(mesh->vertices[temp->vertexId[j]]);
-			unsigned int hash = vertexHash(v, decimalFilter) % map_size;
+			unsigned int hash = float3Hash(v->pos, decimalFilter) % map_size;
 			HashNode** ptr = &map[hash];
 			
 			// check if vertex is already in map
@@ -171,9 +165,7 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 			if (!found) {
 				*ptr = (HashNode*)calloc(1, sizeof(HashNode));
 				(*ptr)->data = vertex_index++;
-				new_vertex_list[(*ptr)->data].pos[0] = v->pos[0];
-				new_vertex_list[(*ptr)->data].pos[1] = v->pos[1];
-				new_vertex_list[(*ptr)->data].pos[2] = v->pos[2];
+				set3fv(new_vertex_list[(*ptr)->data].pos, v->pos);
 			}
 			temp->vertexId[j] = (*ptr)->data;
 		}
@@ -206,11 +198,11 @@ int realloc_mesh_with_face_vertices(Mesh* mesh) {
 	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces);
 	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in realloc_mesh_with_face_vertices\n"); return -1; }
 
-	// TODO: benchmark this; possibly parallelism introduces more cache misses and hurts performance
+	// NOTE: benchmark demonstrated >2x speedup multithreading speedup
 	#pragma omp parallel for
 	for (int i = 0; i < mesh->num_faces; i++) {
 		// add to new list; note no overlap between threads
-		new_vertex_list[i*3] = mesh->vertices[mesh->faces[i].vertexId[0]];
+		new_vertex_list[i*3]     = mesh->vertices[mesh->faces[i].vertexId[0]];
 		new_vertex_list[i*3 + 1] = mesh->vertices[mesh->faces[i].vertexId[1]];
 		new_vertex_list[i*3 + 2] = mesh->vertices[mesh->faces[i].vertexId[2]];
 
@@ -227,7 +219,7 @@ int realloc_mesh_with_face_vertices(Mesh* mesh) {
 }
 
 // Compute vnormals for flat shading. Each vertex of a face uses the face's normal.
-// @Assuming: CCW face orientation, faces are triangles, vertex list is face-vertex
+// @NOTE: assuming CCW face orientation, faces are triangles, vertex list is face-vertex
 int compute_vnormal_flat(Mesh* mesh) {
 	printf("  computing vnormal flat\n");
 	// for each face:
@@ -245,30 +237,26 @@ int compute_vnormal_flat(Mesh* mesh) {
 		Vertex *v0 = &mesh->vertices[mesh->faces[i].vertexId[0]];
 		Vertex *v1 = &mesh->vertices[mesh->faces[i].vertexId[1]];
 		Vertex *v2 = &mesh->vertices[mesh->faces[i].vertexId[2]];
-		// e1
-		e1[0] = v1->pos[0] - v0->pos[0];
-		e1[1] = v1->pos[1] - v0->pos[1];
-		e1[2] = v1->pos[2] - v0->pos[2];
-		// e2
-		e2[0] = v2->pos[0] - v1->pos[0];
-		e2[1] = v2->pos[1] - v1->pos[1];
-		e2[2] = v2->pos[2] - v1->pos[2];
 
-		// cross product will not be near 0 because we are using edges of a triangle
+		// edges of triangle
+		sub3f(e1, v1->pos, v0->pos);
+		sub3f(e2, v2->pos, v1->pos);
+
+		// cross product will not be near 0 if triangle is not degenerate
 		cross3f(res, e1, e2);
-		normalize_in_place3f(res);
+		normalize3f_inplace(res);
 
 		// write normal to vertex
-		set3f(v0->normal, res[0], res[1], res[2]);
-		set3f(v1->normal, res[0], res[1], res[2]);
-		set3f(v2->normal, res[0], res[1], res[2]);
+		set3fv(v0->normal, res);
+		set3fv(v1->normal, res);
+		set3fv(v2->normal, res);
 	}
 	mesh->has_normals = true;
 
 	return 0;
 }
 
-// @Assuming: vertex_normal[i] goes to vertex[i] for all i
+// @NOTE: assuming vertex_normal[i] goes to vertex[i] for all i
 // @TODO: speed this up. taking 2 seconds to read 125mb text file. speedup may require better non-text file format.
 int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
@@ -294,7 +282,11 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	// counts items in file
 	char buf[512];
 	FILE* file = fopen(filename, "r");
-	while (fgets(buf, 2048, file) != NULL) {
+	if (file == NULL) { 
+		printf("FILE %s is NULL in malloc_mesh_fields_from_obj_file\n", filename);
+		return 0;
+	}
+	while (fgets(buf, sizeof(buf), file) != NULL) {
 		if (buf[0] == 'v' && buf[1] == ' ') ++num_vertices;
 		if (buf[0] == 'v' && buf[1] == 't') {
 			++num_uv_coords;
@@ -312,8 +304,9 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 				if (*p == ' ' && *(p+1) >= '0' && *(p+1) <= '9')
 					count++;
 			}
-			if (count == 4) 
+			if (count == 4) {
 				num_faces++;
+			}
 			num_faces++;
 		}
 	}
@@ -324,10 +317,10 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	mesh->faces = (Face*)malloc(sizeof(Face)*num_faces);
 	
 	// load items onto memory
-	while (fgets(buf, 512, file) != NULL) {
+	while (fgets(buf, sizeof(buf), file) != NULL) {
 		if (buf[0] == 'v' && buf[1] == ' ') {
 			if (sscanf(buf, "v %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
-				set3f(mesh->vertices[v_index].pos, pos[0], pos[1], pos[2]);
+				set3fv(mesh->vertices[v_index].pos, pos);
 				++v_index;
 			}
 		}
@@ -340,7 +333,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 		}
 		if (vnormals_enabled && buf[0] == 'v' && buf[1] == 'n') {
 			if (sscanf(buf, "vn %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
-				set3f(mesh->vertices[vn_index].normal, pos[0], pos[1], pos[2]);
+				set3fv(mesh->vertices[vn_index].normal, pos);
 				++vn_index;
 			}
 		}
@@ -406,8 +399,8 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 		} else {
 			printf("  normals disabled\n");
 		}
-
-		
+		free(mesh->vertices);
+		free(mesh->faces);
 		return 0;
 	}
 
@@ -426,11 +419,11 @@ int addMeshInstanceToGlobalScene(MeshInstance* meshInstance) {
 	return global_scene.meshInstanceCount;
 }
 
-// register mesh
+// register mesh; returns Id of registered mesh
 int addMeshToGlobalPool(Mesh* mesh) {
 	if (global_resource_pool.meshCount != __MAX_MESHES__)
 		global_resource_pool.meshes[global_resource_pool.meshCount++] = mesh;
-	return global_resource_pool.meshCount;
+	return global_resource_pool.meshCount - 1;
 }
 
 // register texture
@@ -489,13 +482,14 @@ void rotateCamera(GLFWwindow* window, float yaw, float pitch) {
 	else if (camera->pitch < -89.0f)
 		camera->pitch = -89.0f;
 
-	camera->front[0] = cos(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
-	camera->front[1] = sin(radiansf(camera->pitch));
-	camera->front[2] = sin(radiansf(camera->yaw)) * cos(radiansf(camera->pitch));
-	normalize_in_place3f(camera->front);
+	camera->front[0] = cosf(radiansf(camera->yaw)) * cosf(radiansf(camera->pitch));
+	camera->front[1] = sinf(radiansf(camera->pitch));
+	camera->front[2] = sinf(radiansf(camera->yaw)) * cosf(radiansf(camera->pitch));
+	normalize3f_inplace(camera->front);
 }
 
 // trigger events based on inputs
+// @TODO: probably set flags here and process input events from mapping flags -> actions ? 
 void processInput(GLFWwindow* window, float deltaTime) {
 	Camera *camera = &(global_scene.camera);
 	MouseInfo *mouse = &(global_scene.mouse);
@@ -504,15 +498,19 @@ void processInput(GLFWwindow* window, float deltaTime) {
 
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
 		float factor = camera->speed * deltaTime;
-		for (int i = 0; i < 3; i++)camera->pos[i] += camera->front[i] * factor;
+		camera->pos[0] += camera->front[0] * factor;
+		camera->pos[1] += camera->front[1] * factor;
+		camera->pos[2] += camera->front[2] * factor;
 	}
 
 	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
 		float right[3];
 		cross3f(right, camera->up, camera->front);
-		normalize_in_place3f(right);
+		normalize3f_inplace(right);
 		float factor = camera->speed * deltaTime;
-		for (int i = 0; i < 3; i++) camera->pos[i] += right[i] * factor;
+		camera->pos[0] += right[0] * factor;
+		camera->pos[1] += right[1] * factor;
+		camera->pos[2] += right[2] * factor;
 	}
 
 	if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
@@ -521,15 +519,19 @@ void processInput(GLFWwindow* window, float deltaTime) {
 
 	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
 		float factor = camera->speed * deltaTime;
-		for (int i = 0; i < 3; i++) camera->pos[i] -= camera->front[i] * factor;
+		camera->pos[0] -= camera->front[0] * factor;
+		camera->pos[1] -= camera->front[1] * factor;
+		camera->pos[2] -= camera->front[2] * factor;
 	}
 
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
 		float right[3];
 		cross3f(right, camera->up, camera->front);
-		normalize_in_place3f(right);
+		normalize3f_inplace(right);
 		float factor = camera->speed * deltaTime;
-		for (int i = 0; i < 3; i++) camera->pos[i] -= right[i] * factor;
+		camera->pos[0] -= right[0] * factor;
+		camera->pos[1] -= right[1] * factor;
+		camera->pos[2] -= right[2] * factor;
 	}
 		
 	if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
@@ -612,7 +614,7 @@ void renderScene(GLFWwindow* window) {
 	// Clear the screen buffer
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	// @TEMP: hardcoding the shader locations here for now
+	// @NOTE: hardcoding the shader locations here for now
 	// this means we are doing that string lookup every frame when we shouldn't need to
 	unsigned int basicShader = global_resource_pool.shaders[0]->shaderID;
 	unsigned int skyboxShader = global_resource_pool.shaders[1]->shaderID;
@@ -633,9 +635,12 @@ void renderScene(GLFWwindow* window) {
 	unsigned int skyboxProjViewLoc = glGetUniformLocation(skyboxShader, "projview");
 
 	// precompute matrix: projview = proj*view
-	// TODO: move the hardcoded values out somewhere
+	// @TODO: move the hardcoded values out somewhere
+	const float fovy = radiansf(60.0f);
+	const float near = 0.1f;
+	const float far = 500.0f;
 	glfwGetFramebufferSize(window, &global_scene.windowWidth, &global_scene.windowHeight);
-	set_perspective_mat(global_scene.proj, radiansf(60.0f), (float)global_scene.windowWidth / (float)global_scene.windowHeight, 0.1f, 500.0f);
+	set_perspective_mat(global_scene.proj, fovy, (float)global_scene.windowWidth / (float)global_scene.windowHeight, near, far);
 	set_lookat_mat(global_scene.view, global_scene.camera.pos, global_scene.camera.front, global_scene.camera.up);
 	mat4_mul(global_scene.projview, global_scene.proj, global_scene.view); 
 
@@ -659,7 +664,7 @@ void renderScene(GLFWwindow* window) {
 		//   Model = Translate * Rotate * Scale
 		//   Normal = mat3(Model^(-T))
 		// new implementation with no glm dependency
-		// We could order this cleverly to do everything in place with no temps, but I don't think the added complexity is worth it
+		// NOTE: We could order this cleverly to do everything in place with no temps, but I don't think the added complexity is worth it
 		float translate_temp[16];
 		float rotate_temp[16];
 		float scale_temp[16];
@@ -682,18 +687,63 @@ void renderScene(GLFWwindow* window) {
 		// Issue a draw call
 		glDrawElements(GL_TRIANGLES, mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
 	}
+
+	// if we want to show the hulls, then do a second pass for them
+	bool showHulls = true;
+	if (showHulls) {
+		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // wireframe for hulls
+		for (int i = 0; i < global_scene.meshInstanceCount; i++) {
+			// error checking
+			MeshInstance* meshInstance = global_scene.meshInstances[i];
+			if (meshInstance == nullptr || meshInstance->globalMeshId < 0) continue;
+			Mesh* mesh = global_resource_pool.meshes[meshInstance->globalMeshId];
+			if (!mesh->has_convex_hull) { printf("missing convex hull for mesh %d\n", meshInstance->globalMeshId); continue; } // mesh does not have a hull
+			if (!mesh->hullId == -1) { printf("meshInstance[%d] is directly referencing a hull!\n", i); continue; } // somehow a meshInstance is directly using a hull as it's mesh
+			
+			// get hull
+			Mesh* hull = global_resource_pool.meshes[mesh->hullId];
+			if (hull->hullId != -1) { printf("mesh->hullId (%d) is not a hull!\n", mesh->hullId); continue; } // the hull mesh is not a hull
+
+			// Bind the VAO (restores all attribute and buffer settings)
+			glBindVertexArray(hull->VAO);
+
+			// Build model and normal matrix
+			//   Model = Translate * Rotate * Scale
+			//   Normal = mat3(Model^(-T))
+			// new implementation with no glm dependency
+			// NOTE: We could order this cleverly to do everything in place with no temps, but I don't think the added complexity is worth it
+			float translate_temp[16];
+			float rotate_temp[16];
+			float scale_temp[16];
+			set_translate_mat(translate_temp, meshInstance->pos);
+			set_rotation_mat(rotate_temp, meshInstance->rotation);
+			set_scale_mat(scale_temp, meshInstance->scale);
+			set_normal_mat(global_scene.normal, rotate_temp, meshInstance->scale);
+			mat4_mul(global_scene.model, rotate_temp, scale_temp);
+			mat4_mul(global_scene.model, translate_temp, global_scene.model);
+			
+			// upload uniforms to the shader
+			glUseProgram(basicShader);
+			glUniform3fv(modelColorLoc, 1, meshInstance->hullColor);
+			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, global_scene.model);
+			glUniformMatrix3fv(normLoc, 1, GL_FALSE, global_scene.normal);
+			glUniform1i(hasNormalsLoc, 0);
+			glUniform1i(hasTextureLoc, 0);
+
+			// Issue a draw call
+			glDrawElements(GL_TRIANGLES, hull->num_faces * 3, GL_UNSIGNED_INT, 0);
+		}
+		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+	}
+
+
 	// draw skybox last
 	glDepthFunc(GL_LEQUAL);
 
-	// perform equivalent of glm::mat4(glm::mat3(view))
-	global_scene.view[3] = 0.0f;
-	global_scene.view[7] = 0.0f;
-	global_scene.view[11] = 0.0f;
-	global_scene.view[12] = 0.0f;
-	global_scene.view[13] = 0.0f;
-	global_scene.view[14] = 0.0f;
-	global_scene.view[15] = 1.0f;
+	// skybox needs to follow us around
+	remove_translation_mat4(global_scene.view);
 
+	// precompute projview
 	mat4_mul(global_scene.projview, global_scene.proj, global_scene.view);
 
 	glUseProgram(skyboxShader);
@@ -716,21 +766,29 @@ unsigned int loadCubemap(const char** textureFiles) {
 	glGenTextures(1, &textureID);
 	glBindTexture(GL_TEXTURE_CUBE_MAP, textureID);
 
-	int width;
-	int height;
-	int nr;
+	int width[6];
+	int height[6];
+	int nr[6];
+	unsigned char* skyboxData[6];
 
+	#pragma omp parallel for
 	for (int i = 0; i < 6; i++) {
-		unsigned char *data = stbi_load(textureFiles[i], &width, &height, &nr, 0);
-		if (data)
-			glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
-		else
+		skyboxData[i] = stbi_load(textureFiles[i], &width[i], &height[i], &nr[i], 0);
+	}
+
+	// we can't parallelize the upload to gpu; it requires opengl context on master thread
+	for (int i = 0; i < 6; i++) {
+		if (skyboxData[i]) {
+			GLenum format = (nr[i] == 4) ? GL_RGBA : GL_RGB;
+			glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, width[i], height[i], 0, format, GL_UNSIGNED_BYTE, skyboxData[i]);
+		} else {
 			printf("failed to load cubemap image: %s\n", textureFiles[i]);
-		stbi_image_free(data);
+		}
+		stbi_image_free(skyboxData[i]);
 	}
 
 	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
@@ -801,6 +859,9 @@ int initMesh(Mesh* mesh) {
 	mesh->num_faces = 0;
 	mesh->has_normals = false;
 
+	mesh->has_convex_hull = false;
+	mesh->hullId = 0;
+
 	// Build VAO, VBO, EBOs for each mesh in the scene
 	// Vertex Attribute Object (VAO): tracks buffers and attribute locations within buffers
 	// Vertex Buffer Object (VBO): physical buffer for vertex data
@@ -840,19 +901,21 @@ void initShaders() {
 	// fragment shader: defines transformation on individual fragments (usually color)
 	//////////////////////////////////////////////
 	
-	const int numShaders = 2;
 	unsigned int basicShader = loadShader("src/shaders/basicShader.vs", "src/shaders/basicShader.fs");
 	unsigned int skyboxShader = loadShader("src/shaders/skyboxShader.vs", "src/shaders/skyboxShader.fs");
+	if (basicShader == 0) { printf("basicShader==0 in initShaders\n"); }
+	if (basicShader == 1) { printf("skyboxShader==0 in initShaders\n"); }
 
-	Shader* shader = (Shader*)malloc(sizeof(Shader)*numShaders);
-	shader[0].shaderID = basicShader;
-	shader[1].shaderID = skyboxShader;
+	// @TODO: learn how to pool these resources correctly
+	Shader* shader0 = (Shader*)calloc(1, sizeof(Shader));
+	shader0->shaderID = basicShader;
+	addShaderToGlobalPool(shader0);
 
-	for (int i = 0; i < numShaders; i++) {
-		addShaderToGlobalPool(&shader[i]);
-	}
+	Shader* shader1 = (Shader*)calloc(1, sizeof(Shader));
+	shader1->shaderID = skyboxShader;
+	addShaderToGlobalPool(shader1);
 
-	// TODO: get locations to shader uniforms
+	// @TODO: get locations to shader uniforms
 	//       if we enhance shader struct to dynamically use these,
 	//       then we can initialize that memory here
 	// glUseProgram(basicShader);
@@ -861,9 +924,22 @@ void initShaders() {
 }
 
 // Load skybox images from file, initialize GL cubemap object, define skybox vertices, initialize skybox VAO/VBO, upload vertices to GPU
-// TODO: Clean up; skybox loads from file can go to global pool; etc
-// TODO: jpg/png loading is too slow. ~100ms per file. Learn better formats for fast loading.
+// @TODO: Clean up; skybox loads from file can go to global pool; etc
+// NOTE: jpg/png loading is too slow. ~100ms per file. TGA increased file size which kept load times about the same.
+//       for now we just load the images in parallel for ~170ms total
 void initSkybox() {
+	#define skybox_tga
+	#ifdef skybox_tga
+	const char* skyboxFiles[] = {
+		"resources/skybox/skybox01/right.tga",
+		"resources/skybox/skybox01/left.tga",
+		"resources/skybox/skybox01/top.tga",
+		"resources/skybox/skybox01/bottom.tga",
+		"resources/skybox/skybox01/front.tga",
+		"resources/skybox/skybox01/back.tga"
+	};
+	#endif
+	#ifdef skybox_png
 	const char* skyboxFiles[] = {
 		"resources/skybox/skybox01/right.png",
 		"resources/skybox/skybox01/left.png",
@@ -872,6 +948,7 @@ void initSkybox() {
 		"resources/skybox/skybox01/front.png",
 		"resources/skybox/skybox01/back.png"
 	};
+	#endif
 
 	global_scene.skybox.cubemapID = loadCubemap(skyboxFiles);
 
@@ -921,8 +998,10 @@ void initSkybox() {
 		 1.0f, -1.0f,  1.0f
 	};
 
-	for (int i = 0; i < 108; i++)
-		global_scene.skybox.vertices[i] = skybox_vertices[i];
+	// @TODO: this memcpy is activating the skybox to the scene
+	// 		  vs the init should just init data from file
+	//        I want to eventually select the active skybox in the loadScene() function
+	memcpy(global_scene.skybox.vertices, skybox_vertices, sizeof(skybox_vertices));
 
 	// Generate objects
 	glGenVertexArrays(1, &(global_scene.skybox.VAO));
@@ -941,7 +1020,7 @@ void initSkybox() {
 	glBindVertexArray(0);
 }
 
-// initializes an initial meshInstance with a hardcoded mesh value
+// quick mesh instance default init
 void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
 	meshInstance->globalMeshId = resourceId;
 	meshInstance->globalTextureId = -1;
@@ -951,52 +1030,62 @@ void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
 	set3f(meshInstance->scale, 1.0f, 1.0f, 1.0f);
 	set4f(meshInstance->rotation, 1.0f, 0.0f, 0.0f, 0.0f);
 
+	set3f(meshInstance->velocity, 0.0f, 0.0f, 0.0f);
+	
+	set3f(meshInstance->hullColor, 1.0f, 0.5f, 0.0f);
+
 	//meshInstance->physics = 3;
 }
 
 // load initial scene (malloc mesh instances)
 void loadScene() {
-	// const float spacing = 5;
-	// for (int i = 0; i < global_resource_pool.meshCount; i++) {
-	// 	MeshInstance* meshInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
-	// 	setDefaultMeshInstance(meshInstance, i);
-	// 	set3f(meshInstance->pos, i*spacing, 0.0f, 0.0f);
-	// 	addMeshInstanceToGlobalScene(meshInstance);
-	// }
-
-	// floor
-	MeshInstance* floorInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
-	floorInstance->globalMeshId = 1;
-	set3f(floorInstance->pos, 0.0f, -20.0f, 0.0f);
-	set3f(floorInstance->color, 0.1f, 0.1f, 0.1f);
-	set3f(floorInstance->scale, 200.0f, 0.1f, 200.0f);
-	set4f(floorInstance->rotation, 1.0f, 0.0f, 0.0f, 0.0f);
-	floorInstance->physics = 2;
-	addMeshInstanceToGlobalScene(floorInstance);
-
-	// physics entities
-	int num_teapots = 1 << 5;
-	const float spacing = 10;
-	MeshInstance* instancePool = (MeshInstance*)malloc(sizeof(MeshInstance) * num_teapots);
-	for (int i = 0; i < num_teapots; i++) {
-		setDefaultMeshInstance(&instancePool[i], 0);
-		set3f(instancePool[i].pos, spacing*randf(), spacing*randf() + 50.0f, spacing*randf());
-		addMeshInstanceToGlobalScene(&instancePool[i]);
-		instancePool[i].physics = 3;
+	// row 1 of each mesh
+	const float spacing = 5;
+	for (int i = 0; i < global_resource_pool.meshCount; i++) {
+		MeshInstance* meshInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
+		setDefaultMeshInstance(meshInstance, i);
+		set3f(meshInstance->pos, i*spacing, 0.0f, 0.0f);
+		meshInstance->physics = 2;
+		addMeshInstanceToGlobalScene(meshInstance);
 	}
+
+	// teapots falling to floor
+	// floor
+	// MeshInstance* floorInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
+	// floorInstance->globalMeshId = 1;
+	// set3f(floorInstance->pos, 0.0f, -20.0f, 0.0f);
+	// set3f(floorInstance->color, 0.1f, 0.1f, 0.1f);
+	// set3f(floorInstance->scale, 200.0f, 0.1f, 200.0f);
+	// set4f(floorInstance->rotation, 1.0f, 0.0f, 0.0f, 0.0f);
+	// floorInstance->physics = 2;
+	// addMeshInstanceToGlobalScene(floorInstance);
+
+	// // physics entities
+	// int num_teapots = 1 << 5;
+	// const float spacing = 10;
+	// MeshInstance* instancePool = (MeshInstance*)malloc(sizeof(MeshInstance) * num_teapots);
+	// for (int i = 0; i < num_teapots; i++) {
+	// 	setDefaultMeshInstance(&instancePool[i], 0);
+	// 	set3f(instancePool[i].pos, spacing*randf(), spacing*randf() + 50.0f, spacing*randf());
+	// 	addMeshInstanceToGlobalScene(&instancePool[i]);
+	// 	instancePool[i].physics = 3;
+	// }
 
 	// light source
 	set3f(global_scene.lightSource.pos, 5.0f, 50.0f, 15.0f);
 
-	// skybox 
-	// @TODO: figure out where the best place to call this is
-	tic();
-	initSkybox();
-	float toc_time = toc();
-	printf("time to load skybox: %.6f ms\n", toc_time);
+	// skybox
+	// @TODO: nothing to do here yet; need to decouple init vs load
+
+	// camera
+	set3f(global_scene.camera.pos, 1.25f, 3.5f, 5.0f);
+	set3f(global_scene.camera.front, -0.25f, -0.5, -1.0f);
+	normalize3f_inplace(global_scene.camera.front);
+	global_scene.camera.pitch = degreesf(asinf(global_scene.camera.front[1]));
+	global_scene.camera.yaw = degreesf(atan2f(global_scene.camera.front[2], global_scene.camera.front[0]));
 }
 
-// @TODO: desperately cleanup
+// @TODO: cleanup
 // for each item in the hardcoded filename list:
 //     1. malloc+init a new mesh
 //     2. malloc mesh fields and load data from file
@@ -1006,23 +1095,29 @@ void loadScene() {
 int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	global_resource_pool.meshCount = 0;
 	global_resource_pool.textureCount = 0;
-	int num_meshes = 2; // @NOTE: THIS DETERMINES HOW MANY FILES IN LIST TO LOAD
 	const char *list_of_meshes[] = {
-		"resources/mesh/teapot.obj",
-		"resources/mesh/box.obj",  // ending here
-		"resources/mesh/teapot2.obj",
-		"resources/mesh/guy.obj", 
-		"resources/mesh/elf.obj", 
-		"resources/large_files/HP_Portrait.obj", 
-		"resources/large_files/kayle.obj"  
+		"resources/mesh/teapot.obj"
+		,"resources/mesh/box.obj"
+		,"resources/mesh/teapot2.obj"
+		,"resources/mesh/guy.obj"
+		//,"resources/large_files/HP_Portrait.obj"
+		//,"resources/large_files/kayle.obj"
+		//,"resources/extra_mesh/elf.obj"
 	};
-	const int vnormal_style = 0; // { 0 = flat | 1 = smooth }
-	for (int i = 0; i < num_meshes; i++) {
+	const int vnormal_style = 1; // { 0 = flat | 1 = smooth }
+	// this caused a bug because I'm trying to operate on elements of this array as if they were malloc'd individually
+	// in the future if I use a pool for this resource, just realloc directly on the global resource pool
+	// Mesh* meshList = (Mesh*)malloc(sizeof(Mesh) * num_meshes);  
+	for (int i = 0; i < sizeof(list_of_meshes)/sizeof(list_of_meshes[0]); i++) {
 		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
 		initMesh(mesh);
 		printf("loading mesh from file: %s\n", list_of_meshes[i]);
 		tic();
-		malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh);
+		if (!malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh)) { 
+			printf("malloc_mesh_fields_from_obj_file returned 0 in initGlobalResourcePoolMallocMeshAndMeshFields for mesh %s\n", list_of_meshes[i]);
+			free(mesh);
+			continue; 
+		}
 		printf("  TIME LOAD %s: %.6f ms\n", list_of_meshes[i], toc());
 		// if we couldn't load normals from file, then compute them now
 		if (!mesh->has_normals) {
@@ -1030,7 +1125,9 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 			tic();
 			if (vnormal_style == 0) {
 				realloc_mesh_with_face_vertices(mesh);
+				printf("finished realloc mesh with face vertex\n");
 				compute_vnormal_flat(mesh);
+				printf("finished vnormal flat\n");
 			} else if (vnormal_style == 1) {
 				const int tol = 5;
 				deduplicate_mesh_vertices(mesh, tol);
@@ -1055,9 +1152,517 @@ void initGlobalScene() {
 	initCamera(global_scene.camera);
 	initLightSource(global_scene.lightSource);
 	initMouseInfo(global_scene.mouse);
+	tic(); initSkybox(); printf("SKYBOX LOAD: %.6f ms\n", toc());
 	global_scene.meshInstanceCount = 0;
 }
 // ===== END INIT FUNCTIONS =====
+
+
+// input: mesh
+// output: mesh representing the convex hull
+// quickhull algorithm
+Mesh* makeConvexHull(Mesh* mesh) {
+	// smaller vertex for algorithm
+	struct Point {
+		float pos[3];
+		unsigned int vertexIndex; // index of this point into the output vertex list
+		bool assigned; // if vertexIndex is assigned yet
+	};
+
+	struct IndexList {
+		unsigned int* items;
+		size_t length;
+		size_t capacity;
+	};
+	
+	// the literature calls these facets but they are just faces
+	struct Facet {
+		unsigned int points[3]; // index in a list of points
+		float normal[3]; // normal facing outward
+		float offset; // plane = { x : n dot x = d }; d is the offset
+
+		bool isNew; // this facet was newly created in the main loop
+		bool isVisible; // visible facets are marked for deletion
+		bool isActive; // instead of deleting, just mark as inactive
+		IndexList extPointListDA; // dynamic list of exterior point indices
+	};
+
+	// This map is used to lookup the unique active facet containing the oriented ridge.
+	// A ridge is an edge between two points. Oriented means we are ordering them such that A(first) and B(second) give A->B in the CCW orientation of the facet using it.
+	// The key is the hash value for the two points A,B and represents the ridge.
+	// The val is the index in facetList of the unique active facet containing this oriented ridge.
+	struct RidgeMapNode {
+		uint64_t key;
+		uint32_t val;
+		RidgeMapNode* next;
+	};
+
+	// undef at end of this function
+	#define new_facet(fList, fListSz, indexA, indexB, indexC, pInterior) do {\
+		float interiorToA[3];\
+		Facet* currentFacet = &fList[(fListSz)];\
+		set3u(currentFacet->points, (indexA), (indexB), (indexC));\
+		set_triangle_normal(currentFacet->normal, pointList[(indexA)].pos, pointList[(indexB)].pos, pointList[(indexC)].pos);\
+		/* if normal . (A - centroid) < 0, then our normal points inward so reorient the triangle */\
+		sub3f(interiorToA, pointList[(indexA)].pos, (pInterior).pos);\
+		if (dot3f(currentFacet->normal, interiorToA) < 0) {\
+			negate3f_inplace(currentFacet->normal);\
+			currentFacet->points[1] = (indexC);\
+			currentFacet->points[2] = (indexB);\
+		}\
+		currentFacet->offset = dot3f(currentFacet->normal, pointList[(indexA)].pos);\
+		currentFacet->isNew = true;\
+		currentFacet->isVisible = false;\
+		currentFacet->isActive = false;\
+		currentFacet->extPointListDA = { NULL, 0, 0 };\
+		facetListSize++;\
+	} while (0)
+
+	// undef at end of this function
+	#define insert_ridge_map(map, map_size, new_key, new_val) do {\
+		RidgeMapNode** ptr = &(map[(new_key) % (map_size)]);\
+		while (*ptr != NULL && (*ptr)->key != (new_key)) {\
+			ptr = &((*ptr)->next);\
+		}\
+		if (*ptr == NULL) {\
+			*ptr = (RidgeMapNode*)calloc(1, sizeof(RidgeMapNode));\
+		}\
+		(*ptr)->key = (new_key);\
+		(*ptr)->val = (new_val);\
+	} while (0)
+
+	// undef at end of this function
+	#define da_append(list, item) do {\
+		if (list.length >= list.capacity) {\
+			list.capacity = list.capacity == 0 ? 256 : list.capacity * 2;\
+			list.items = (decltype(list.items))realloc(list.items, list.capacity * sizeof(*list.items));\
+		}\
+		list.items[list.length++] = item;\
+	} while (0)
+
+	// convexHull guaranteed to have size <= current size so we prealloc here and resize at the end
+	Point* pointList = (Point*)malloc(sizeof(Point) * mesh->num_vertices);
+	size_t pointListSize = 0;
+	
+	// ===== DEDUPLICATION PASS =====
+	// TODO: benchmark map vs O(n^2) dedup
+	{
+		const int BUCKET_SIZE = 8; // prealloc bucket size for collisions
+		struct VertexHashSetNode {
+			Vertex* vertex;
+			VertexHashSetNode* next;
+		};
+
+		// set tolerance levels for float[3] equivalence
+		const int tol = 5;
+		int decimalFilter = 1;
+		for (int i = 0; i < tol; i++) decimalFilter *= 10;
+		const float eps = 1.0f/(float)decimalFilter;
+
+		// use a hash set to dedup vertices
+		size_t set_size = mesh->num_vertices;
+		VertexHashSetNode** set = (VertexHashSetNode**)calloc(set_size, sizeof(VertexHashSetNode*));
+		if (set == nullptr) { fprintf(stderr, "Failed to malloc hash set in makeConvexHull\n"); free(pointList); return nullptr; }
+		for (int i = 0; i < mesh->num_vertices; i++) {
+			Vertex* v = &(mesh->vertices[i]);
+			unsigned int hash = float3Hash(v->pos, decimalFilter) % set_size;
+
+			// check if vertex is in set
+			VertexHashSetNode** ptr = &set[hash];
+			bool found = false;
+			while (*ptr != NULL) {
+				if (equals3f((*ptr)->vertex->pos, v->pos, eps)) {
+					found = true;
+					break;
+				}
+				ptr = &((*ptr)->next);
+			}
+
+			// if vertex is not found in the set then add it
+			if (!found) {
+				*ptr = (VertexHashSetNode*)calloc(1, sizeof(VertexHashSetNode));
+				(*ptr)->vertex = v;
+				set3fv(pointList[pointListSize].pos, v->pos);
+				pointList[pointListSize].assigned = false;
+				pointListSize++;
+			}
+		}
+		for (int i = 0; i < set_size; i++) {
+			VertexHashSetNode* ptr = set[i];
+			VertexHashSetNode* temp;
+			while (ptr != NULL) {
+				temp = ptr->next;
+				free(ptr);
+				ptr = temp;
+			}
+		}
+		free(set);
+		pointList = (Point*)realloc(pointList, pointListSize * sizeof(Point));
+	}
+	printf("(CONVEX HULL): vertices deduplicated: %d (before) | %d (after)\n", mesh->num_vertices, pointListSize);
+	// ===== END DEDUP PASS =====
+
+	// ===== BEGIN QUICKHULL =====
+	// TODO: benchmark quickhull vs the rest of makeConvexHull
+	printf("(CONVEX HULL): >> BEGIN QUICKHULL\n");
+	// list of facets used in convex hull, size may exceed cap and trigger realloc
+	size_t facetListSize = 0;
+	size_t facetListCap = maxi(4, mesh->num_faces);
+	Facet* facetList = (Facet*)malloc(sizeof(Facet) * facetListCap);
+	if (!facetList) { fprintf(stderr, "Failed to malloc facetList in makeConvexHull\n"); free(pointList); return NULL; }
+
+	// map point index A, B to the unique facet with the directed edge A->B
+	// will not realloc
+	size_t ridgeMapSize = mesh->num_faces;
+	RidgeMapNode** ridgeMap = (RidgeMapNode**)calloc(ridgeMapSize, sizeof(RidgeMapNode*));
+	if (!ridgeMap) { fprintf(stderr, "Failed to malloc ridgeMap in makeConvexHull\n"); free(pointList); free(facetList); return NULL; }
+
+	// initial simplex:
+	// p0, p1 are min/max of one dim of above
+	// p2 is argmax distance from p1p2 segment
+	// p3 is argmax distance from p1p2p3 plane
+	unsigned int p0, p1, p2, p3;
+
+	// step 1: take min/max along X
+	{
+		unsigned int minX = 0;
+		unsigned int maxX = 0;
+		for (int i = 1; i < pointListSize; i++) {
+			if (pointList[i].pos[0] < pointList[minX].pos[0]) minX = i;
+			if (pointList[i].pos[0] > pointList[maxX].pos[0]) maxX = i;
+		}
+		p0 = minX;
+		p1 = maxX;
+	}
+
+	// step 2: find point farthest in perpendicular distance from segment (p0p1)
+	// distance(p, p0p1) = ||(p - p0) x (p1 - p0)|| / || p1 - p0 ||
+	//   but we can just check || (p - p0) x (p1 - p0) ||^2
+	p2 = 0;
+	float maxDist;
+	{
+		maxDist = 0;
+		float distance;
+		float newSegment[3]; // p - p0
+		float segment[3]; // p1 - p0
+		float cross_temp[3];
+		sub3f(segment, pointList[p1].pos, pointList[p0].pos);
+		for (int i = 1; i < pointListSize; i++) {
+			if (i == p0 || i == p1) continue; // skip these points
+			sub3f(newSegment, pointList[i].pos, pointList[p0].pos);
+			cross3f(cross_temp, newSegment, segment); // (p - p0) x (p1 - p0)
+			distance = dot3f(cross_temp, cross_temp);
+			if (distance > maxDist) {
+				p2 = i;
+				maxDist = distance;
+			}
+		}
+	}
+	
+	// step 3: find point farthest in perpendicular distance from normal
+	// normal(p0p1p2) = normalize((p2 - p0) x (p1 - p0))
+	// distance(p, p0p1p2) = abs( (p2 - p0) . (normal) ) 
+	{
+		maxDist = 0;
+		float distance;
+		float segP0P2[3];
+		float segP0P1[3];
+		float normal[3];
+		float segP0Pi[3];
+		sub3f(segP0P2, pointList[p2].pos, pointList[p0].pos);
+		sub3f(segP0P1, pointList[p1].pos, pointList[p0].pos);
+		cross3f(normal, segP0P2, segP0P1);
+		normalize3f_inplace(normal); // this is a normal vector to the p1p2p3 triangle
+		p3 = 0;
+		maxDist = 0;
+		distance = 0;
+		for (int i = 0; i < pointListSize; i++) {
+			if (i == p0 || i == p1 || i == p2) continue;
+			sub3f(segP0Pi, pointList[i].pos, pointList[p0].pos);
+			distance = fabsf(dot3f(segP0Pi, normal));
+			if (distance > maxDist) {
+				p3 = i;
+				maxDist = distance;
+			}
+		}
+	}
+
+	// Compute centroid to orient direction of normals away from center
+	Point centroid;
+	set3fv(centroid.pos, pointList[p0].pos);
+	add3f(centroid.pos, centroid.pos, pointList[p1].pos);
+	add3f(centroid.pos, centroid.pos, pointList[p2].pos);
+	add3f(centroid.pos, centroid.pos, pointList[p3].pos);
+	mult3f(centroid.pos, centroid.pos, 0.25f);
+
+	// set initial faces for tetrahedron
+	// Note: Use macro function because we are defining the structs inside this function.
+	{
+		new_facet(facetList, facetListSize, p0, p1, p2, centroid);
+		new_facet(facetList, facetListSize, p0, p1, p3, centroid);
+		new_facet(facetList, facetListSize, p0, p2, p3, centroid);
+		new_facet(facetList, facetListSize, p1, p2, p3, centroid);
+
+		// insert ridges into ridge map
+		for (int i = 0; i < 4; i++) {
+			uint64_t hash[3];
+			hash[0] = hash_pair(facetList[i].points[0], facetList[i].points[1]);
+			hash[1] = hash_pair(facetList[i].points[1], facetList[i].points[2]);
+			hash[2] = hash_pair(facetList[i].points[2], facetList[i].points[0]);
+			insert_ridge_map(ridgeMap, ridgeMapSize, hash[0], i);
+			insert_ridge_map(ridgeMap, ridgeMapSize, hash[1], i);
+			insert_ridge_map(ridgeMap, ridgeMapSize, hash[2], i);
+
+			facetList[i].isNew = false;
+			facetList[i].isActive = true;
+		}
+	}
+
+	// Assign every remaining point to the facet (of the original 4) which it is farthest outside of, if it is outside
+	{
+		float distance;
+		float maxDist;
+		Facet* assignedFacet;
+		for (size_t i = 0; i < pointListSize; i++) {
+			if (i == p0 || i == p1 || i == p2 || i == p3) continue;
+			maxDist = 0;
+			assignedFacet = nullptr;
+			for (size_t j = 0; j < facetListSize; j++) {
+				distance = dot3f(pointList[i].pos, facetList[j].normal) - facetList[j].offset;
+				if (distance > maxDist) {
+					maxDist = distance;
+					assignedFacet = &facetList[j];
+				}
+			}
+			// assign the point
+			if (assignedFacet != nullptr) {
+				da_append(assignedFacet->extPointListDA, i);
+			}
+		}
+	}
+
+	printf("(CONVEX HULL): Total interior points (discarded): %d\n", pointListSize - (facetList[0].extPointListDA.length + facetList[1].extPointListDA.length + facetList[2].extPointListDA.length + facetList[3].extPointListDA.length + 4));
+
+	// Main loop:
+	//  1. Take a facet that is both active and has exterior points
+	//  2. Find the point p which is farthest outside that facet (max perp. distance)
+	//  3. Find all facets visible to p and set as inactive
+	//  4. Find all horizon edges (with p1, p2) and form a new facet (p, p1, p2) with corrected orientation (increases facetListSize)
+	//  5. Reassign all exterior points belonging to the inactive facets among the newly created facets
+	//  6. After each iteration, a processed facet will be inactive or have no outside points
+	for (size_t i = 0; i < facetListSize; i++) {
+		if (!facetList[i].isActive || facetList[i].extPointListDA.length == 0) continue;
+
+		// get farthest point
+		unsigned int p = facetList[i].extPointListDA.items[0];
+		float maxDist = 0;
+		float dist;
+		for (size_t j = 0; j < facetList[i].extPointListDA.length; j++) {
+			dist = dot3f(pointList[facetList[i].extPointListDA.items[j]].pos, facetList[i].normal) - facetList[i].offset;
+			if (dist > maxDist) {
+				maxDist = dist;
+				p = facetList[i].extPointListDA.items[j];
+			}
+		}
+
+		// visibility check
+		for (size_t j = 0; j < facetListSize; j++) {
+			if (!facetList[j].isActive) continue;
+			if (dot3f(pointList[p].pos, facetList[j].normal) - facetList[j].offset > 0.0f) {
+				facetList[j].isVisible = true;
+			}
+		}
+
+		// horizon edge check
+		//   For each visible facet:
+		//      For each edge of facet:
+		//          If facet across edge is not visible, then this is a horizon edge
+		//          NOTE: facet across edge will be oriented opposite (facet1: (AB) --> facet2: (BA))
+		//   For all horizon edges (points X, Y): Form new facet (X, Y, P) with correct orientation
+		//   Distribute all exterior points from visible facets to the newly created facets
+		//   Facets marked as visible (and thus have no exterior points) will be marked inactive
+		IndexList newFacetIndices = {NULL, 0, 0};
+		for (size_t j = 0; j < facetListSize; j++) {
+			if (!facetList[j].isActive || !facetList[j].isVisible || facetList[j].isNew) continue;
+			for (int k = 0; k < 3; k++) {
+				unsigned int A = facetList[j].points[k];
+				unsigned int B = facetList[j].points[(k + 1) % 3];
+				
+				// check B->A for the adjacent visibility
+				uint64_t hash = hash_pair(B, A);
+				RidgeMapNode** ptr = &(ridgeMap[hash % ridgeMapSize]);
+				while (*ptr != NULL && (*ptr)->key != hash) {
+					ptr = &((*ptr)->next);
+				}
+				if (*ptr == NULL) { printf("(CONVEX HULL): PANIC; RIDGE NOT FOUND: facetList[%u].points[%u//%u]\n", j, B, A); continue; }
+				if (!facetList[(*ptr)->val].isVisible) {
+					da_append(newFacetIndices, facetListSize);
+					if (facetListSize >= facetListCap) {
+						facetListCap *= 2;
+						facetList = (Facet*)realloc(facetList, facetListCap * sizeof(Facet));
+					}
+					new_facet(facetList, facetListSize, A, B, p, centroid);
+				}
+			}
+		}
+
+		// TODO: benchmark this loop
+		for (size_t j = 0; j < facetListSize; j++) {
+			if (facetList[j].isActive && facetList[j].isVisible) {
+				// redistribute points
+				float distance;
+				float maxDist;
+				Facet* assignedFacet;
+				for (size_t k = 0; k < facetList[j].extPointListDA.length; k++) {
+					size_t test_point_index = facetList[j].extPointListDA.items[k];
+					if (test_point_index == p) continue; // dont reassign active point
+					// reassign to new facets
+					maxDist = 0;
+					assignedFacet = nullptr;
+					for (size_t w = 0; w < newFacetIndices.length; w++) {
+						size_t test_facet_index = newFacetIndices.items[w];
+						distance = dot3f(pointList[test_point_index].pos, facetList[test_facet_index].normal) - facetList[test_facet_index].offset;
+						if (distance > maxDist) {
+							maxDist = distance;
+							assignedFacet = &facetList[test_facet_index];
+						}
+					}
+					if (assignedFacet != nullptr) {
+						da_append(assignedFacet->extPointListDA, test_point_index);
+					}
+				}
+				free(facetList[j].extPointListDA.items);
+				facetList[j].extPointListDA = {NULL, 0, 0};
+				facetList[j].isActive = false;
+				facetList[j].isVisible = false;
+			}
+		}
+
+		for (size_t j = 0; j < facetListSize; j++) {
+			if (!facetList[j].isNew) continue;
+			uint64_t hash[3];
+			hash[0] = hash_pair(facetList[j].points[0], facetList[j].points[1]);
+			hash[1] = hash_pair(facetList[j].points[1], facetList[j].points[2]);
+			hash[2] = hash_pair(facetList[j].points[2], facetList[j].points[0]);
+			insert_ridge_map(ridgeMap, ridgeMapSize, hash[0], j);
+			insert_ridge_map(ridgeMap, ridgeMapSize, hash[1], j);
+			insert_ridge_map(ridgeMap, ridgeMapSize, hash[2], j);
+			facetList[j].isNew = false;
+			facetList[j].isActive = true;
+		}
+		free(newFacetIndices.items);
+		newFacetIndices = {NULL, 0, 0};
+	}
+	// ===== END QUICKHULL =====
+	printf("(CONVEX HULL): << END QUICKHULL\n");
+
+	// ===== BUILD MESH FROM CONVEX HULL =====
+	// now the convex hull is created, we stuff this in a mesh
+	Mesh* convexHull = (Mesh*)malloc(sizeof(Mesh));
+	initMesh(convexHull);
+	convexHull->hullId = -1;
+
+	size_t numActiveFacets = 0;
+	for (int i = 0; i < facetListSize; i++) {
+		if (facetList[i].isActive) numActiveFacets++;
+	}
+
+	// set mesh vertices
+	convexHull->vertices = (Vertex*)malloc(sizeof(Vertex)*numActiveFacets*3); // overallocate then realloc later
+	convexHull->faces = (Face*)malloc(sizeof(Face)*numActiveFacets);
+	convexHull->num_faces = numActiveFacets;
+	size_t faceIndex = 0;
+	size_t vertexIndex = 0;
+	for (int i = 0; i < facetListSize; i++) {
+		if (!facetList[i].isActive) continue;
+		Point* p0 = &pointList[facetList[i].points[0]];
+		Point* p1 = &pointList[facetList[i].points[1]];
+		Point* p2 = &pointList[facetList[i].points[2]];
+		if (!p0->assigned) {
+			// add p0
+			set3fv(convexHull->vertices[vertexIndex].pos, p0->pos);
+			p0->vertexIndex = vertexIndex;
+			p0->assigned = true;
+			vertexIndex++;
+		}
+		if (!p1->assigned) {
+			// add p1
+			set3fv(convexHull->vertices[vertexIndex].pos, p1->pos);
+			p1->vertexIndex = vertexIndex;
+			p1->assigned = true;
+			vertexIndex++;
+		}
+		if (!p2->assigned) {
+			// add p2
+			set3fv(convexHull->vertices[vertexIndex].pos, p2->pos);
+			p2->vertexIndex = vertexIndex;
+			p2->assigned = true;
+			vertexIndex++;
+		}
+		// add face p0,p1,p2
+		set3u(convexHull->faces[faceIndex].vertexId, p0->vertexIndex, p1->vertexIndex, p2->vertexIndex);
+		faceIndex++;
+	}
+
+	// realloc
+	convexHull->vertices = (Vertex*)realloc(convexHull->vertices, sizeof(Vertex)*vertexIndex);
+	convexHull->num_vertices = vertexIndex;
+	// ===== END MESH BUILDING =====
+
+	for (int i = 0; i < facetListSize; i++) {
+		if (facetList[i].extPointListDA.items != NULL) {
+			free(facetList[i].extPointListDA.items);
+			facetList[i].extPointListDA = {NULL, 0, 0};
+		}
+	}
+
+	#undef da_append
+	#undef insert_ridge_map
+	#undef new_facet
+
+	for (int i = 0; i < ridgeMapSize; i++) {
+		RidgeMapNode* ptr = ridgeMap[i];
+		RidgeMapNode* temp;
+		while (ptr != NULL) {
+			temp = ptr->next;
+			free(ptr);
+			ptr = temp;
+		}
+	}
+	free(ridgeMap);
+	free(pointList);
+	free(facetList);
+	return convexHull;
+}
+
+// wrapper function for building convex hulls and adding to scene
+void executeConvexHulls() {
+	Mesh* hull;
+	const int meshCountBeforeHulls = global_resource_pool.meshCount;
+	unsigned int hullId;
+	for (int i = 0; i < meshCountBeforeHulls; i++) {
+		printf(">> building convex hull:\n");
+		tic();
+		hull = makeConvexHull(global_resource_pool.meshes[i]);
+		printf(">> convex hull in %.6f ms\n", toc());
+		if (hull != nullptr) {
+			hullId = addMeshToGlobalPool(hull);
+			global_resource_pool.meshes[i]->hullId = hullId;
+			global_resource_pool.meshes[i]->has_convex_hull = true;
+			uploadMeshBuffers(hull);
+		} else {
+			printf("makeConvexHull(meshes[%d]) returned nullptr\n", i);
+		}
+	}
+	printf("global_resource_pool looks like:\n");
+	printf(">> size = %d\n", global_resource_pool.meshCount);
+	for (int i = 0; i < global_resource_pool.meshCount; i++) {
+		printf(">> meshes[%d] has_convex_hull: %d\n", i, global_resource_pool.meshes[i]->has_convex_hull);
+		printf(">> meshes[%d] hullId: %d\n", i, global_resource_pool.meshes[i]->hullId);
+	}
+	printf("exiting executeConvexHulls()\n");
+}
+
 
 int main(int argc, char** argv) {
 	srand(getSeed());
@@ -1086,6 +1691,13 @@ int main(int argc, char** argv) {
 	loadScene();
 	// ========================= END SCENE SETUP =========================
 
+
+	// ================ Playground to test 3D algorithms before render loop ===================
+	executeConvexHulls();
+	// ================ end playground ================
+
+
+
 	Metrics metrics;
 	initMetrics(&metrics);
 
@@ -1100,7 +1712,7 @@ int main(int argc, char** argv) {
 		// Handle input
 		processInput(window, metrics.deltaTime);
 
-		// TODO: separate systems? i.e. updatePhysics(), updateAnim(), ...
+		// @TODO: separate systems? i.e. updatePhysics(), updateAnim(), ...
 		updateScene(window, metrics.deltaTime);
 
 		// Render the global scene to the back buffer
