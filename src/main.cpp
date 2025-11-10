@@ -1102,7 +1102,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		,"resources/mesh/box.obj"
 		,"resources/mesh/teapot2.obj"
 		,"resources/mesh/guy.obj"
-		,"resources/large_files/HP_Portrait.obj"
+		//,"resources/large_files/HP_Portrait.obj"
 		//,"resources/large_files/kayle.obj"
 		//,"resources/extra_mesh/elf.obj"
 	};
