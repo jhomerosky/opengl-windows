@@ -198,7 +198,6 @@ int realloc_mesh_with_face_vertices(Mesh* mesh) {
 	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces);
 	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in realloc_mesh_with_face_vertices\n"); return -1; }
 
-	printf("before omp parallel for in realloc_mesh_with_face_vertices\n");
 	// NOTE: benchmark demonstrated >2x speedup multithreading speedup
 	#pragma omp parallel for
 	for (int i = 0; i < mesh->num_faces; i++) {
@@ -212,7 +211,6 @@ int realloc_mesh_with_face_vertices(Mesh* mesh) {
 		mesh->faces[i].vertexId[1] = i*3 + 1;
 		mesh->faces[i].vertexId[2] = i*3 + 2;
 	}
-	printf("after omp parallel for in realloc_mesh_with_face_vertices\n");
 	free(mesh->vertices);
 	mesh->vertices = new_vertex_list;
 	mesh->num_vertices = 3 * mesh->num_faces;
