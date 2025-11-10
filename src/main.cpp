@@ -1125,9 +1125,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 			tic();
 			if (vnormal_style == 0) {
 				realloc_mesh_with_face_vertices(mesh);
-				printf("finished realloc mesh with face vertex\n");
 				compute_vnormal_flat(mesh);
-				printf("finished vnormal flat\n");
 			} else if (vnormal_style == 1) {
 				const int tol = 5;
 				deduplicate_mesh_vertices(mesh, tol);
