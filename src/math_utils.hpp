@@ -16,6 +16,7 @@ static inline void set3fv(float out[3], const float in[3]);
 static inline void set4f(float out[4], const float f0, const float f1, const float f2, const float f3);
 static inline void set4fv(float out[4], const float in[4]);
 static inline float maxf(float a, float b);
+static inline int maxi(int a, int b);
 static inline float dot3f(const float u[3], const float v[3]);
 static inline float dot4f(const float u[4], const float v[4]);
 static inline float fast_rsqrt(float number);
@@ -161,6 +162,10 @@ static inline void normalize3f_inplace(float v[3]) {
 }
 
 static inline float maxf(float a, float b) { 
+	return b < a ? a : b;
+}
+
+static inline int maxi(int a, int b) {
 	return b < a ? a : b;
 }
 

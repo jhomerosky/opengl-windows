@@ -1309,7 +1309,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	printf("(CONVEX HULL): >> BEGIN QUICKHULL\n");
 	// list of facets used in convex hull, size may exceed cap and trigger realloc
 	size_t facetListSize = 0;
-	size_t facetListCap = mesh->num_faces;
+	size_t facetListCap = maxi(4, mesh->num_faces);
 	Facet* facetList = (Facet*)malloc(sizeof(Facet) * facetListCap);
 	if (!facetList) { fprintf(stderr, "Failed to malloc facetList in makeConvexHull\n"); free(pointList); return NULL; }
 
@@ -1320,9 +1320,9 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	if (!ridgeMap) { fprintf(stderr, "Failed to malloc ridgeMap in makeConvexHull\n"); free(pointList); free(facetList); return NULL; }
 
 	// initial simplex:
-	// p1, p2 are min/max of one dim of above
-	// p3 is argmax distance from p1p2 segment
-	// p4 is argmax distance from p1p2p3 plane
+	// p0, p1 are min/max of one dim of above
+	// p2 is argmax distance from p1p2 segment
+	// p3 is argmax distance from p1p2p3 plane
 	unsigned int p0, p1, p2, p3;
 
 	// step 1: take min/max along X
@@ -1338,7 +1338,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	}
 
 	// step 2: find point farthest in perpendicular distance from segment (p0p1)
-	// distance(p, p1p2) = ||(p - p0) x (p1 - p0)|| / || p1 - p0 ||
+	// distance(p, p0p1) = ||(p - p0) x (p1 - p0)|| / || p1 - p0 ||
 	//   but we can just check || (p - p0) x (p1 - p0) ||^2
 	p2 = 0;
 	float maxDist;
@@ -1348,7 +1348,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		float newSegment[3]; // p - p0
 		float segment[3]; // p1 - p0
 		float cross_temp[3];
-		sub3f(segment, pointList[p2].pos, pointList[p1].pos);
+		sub3f(segment, pointList[p1].pos, pointList[p0].pos);
 		for (int i = 1; i < pointListSize; i++) {
 			if (i == p0 || i == p1) continue; // skip these points
 			sub3f(newSegment, pointList[i].pos, pointList[p0].pos);
@@ -1362,8 +1362,8 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	}
 	
 	// step 3: find point farthest in perpendicular distance from normal
-	// normal(p1p2p3) = normalize((p2 - p0) x (p1 - p0))
-	// distance(p, p1p2p3) = abs( (p2 - p0) . (normal) ) 
+	// normal(p0p1p2) = normalize((p2 - p0) x (p1 - p0))
+	// distance(p, p0p1p2) = abs( (p2 - p0) . (normal) ) 
 	{
 		maxDist = 0;
 		float distance;
@@ -1498,8 +1498,11 @@ Mesh* makeConvexHull(Mesh* mesh) {
 				}
 				if (*ptr == NULL) { printf("(CONVEX HULL): PANIC; RIDGE NOT FOUND: facetList[%u].points[%u//%u]\n", j, B, A); continue; }
 				if (!facetList[(*ptr)->val].isVisible) {
-					if (facetListSize > facetListCap) printf("(CONVEX HULL): PANIC; facetListSize > facetListCap in horizon edge loop; j=%u\n", j);
 					da_append(newFacetIndices, facetListSize);
+					if (facetListSize >= facetListCap) {
+						facetListCap *= 2;
+						facetList = (Facet*)realloc(facetList, facetListCap * sizeof(Facet));
+					}
 					new_facet(facetList, facetListSize, A, B, p, centroid);
 				}
 			}
