@@ -1250,9 +1250,9 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// TODO: benchmark map vs O(n^2) dedup
 	{
 		const int BUCKET_SIZE = 8; // prealloc bucket size for collisions
-		struct VertexHashSetBucket {
-			Vertex* bucket[BUCKET_SIZE];
-			size_t bucket_next; // length of used bucket
+		struct VertexHashSetNode {
+			Vertex* vertex;
+			VertexHashSetNode* next;
 		};
 
 		// set tolerance levels for float[3] equivalence
@@ -1263,32 +1263,39 @@ Mesh* makeConvexHull(Mesh* mesh) {
 
 		// use a hash set to dedup vertices
 		size_t set_size = mesh->num_vertices;
-		VertexHashSetBucket* set = (VertexHashSetBucket*)calloc(set_size, sizeof(VertexHashSetBucket));
+		VertexHashSetNode** set = (VertexHashSetNode**)calloc(set_size, sizeof(VertexHashSetNode*));
+		if (set == nullptr) { fprintf(stderr, "Failed to malloc hash set in makeConvexHull\n"); free(pointList); return nullptr; }
 		for (int i = 0; i < mesh->num_vertices; i++) {
 			Vertex* v = &(mesh->vertices[i]);
 			unsigned int hash = float3Hash(v->pos, decimalFilter) % set_size;
 
 			// check if vertex is in set
+			VertexHashSetNode** ptr = &set[hash];
 			bool found = false;
-			for (int j = 0; j < set[hash].bucket_next; j++) {
-				if (equals3f(set[hash].bucket[j]->pos, v->pos, eps)) {
+			while (*ptr != NULL) {
+				if (equals3f((*ptr)->vertex->pos, v->pos, eps)) {
 					found = true;
 					break;
 				}
+				ptr = &((*ptr)->next);
 			}
 
 			// if vertex is not found in the set then add it
 			if (!found) {
-				VertexHashSetBucket* ptr = &set[hash];
-				if (ptr->bucket_next == BUCKET_SIZE) {
-					printf("(CONVEX HULL): PANIC; RAN OUT OF BUCKET\n");
-					continue;
-				}
-				ptr->bucket[ptr->bucket_next] = v;
-				ptr->bucket_next++;
+				*ptr = (VertexHashSetNode*)calloc(1, sizeof(VertexHashSetNode));
+				(*ptr)->vertex = v;
 				set3fv(pointList[pointListSize].pos, v->pos);
 				pointList[pointListSize].assigned = false;
 				pointListSize++;
+			}
+		}
+		for (int i = 0; i < set_size; i++) {
+			VertexHashSetNode* ptr = set[i];
+			VertexHashSetNode* temp;
+			while (ptr != NULL) {
+				temp = ptr->next;
+				free(ptr);
+				ptr = temp;
 			}
 		}
 		free(set);
