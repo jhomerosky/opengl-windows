@@ -87,7 +87,6 @@ static inline uint64_t hash_pair(const uint32_t a, const uint32_t b) {
 // @NOTE: assumes vertices are deduplicated
 // compute each face's normal vector, add vnormal to each component vector, normalize all vectors
 int compute_vnormal_smooth(Mesh* mesh) {
-	printf("  computing vnormal smooth\n");
 	// @TODO: can we parallelize computing normals and do addition later?
 	for (int i = 0; i < mesh->num_faces; i++) {
 		float e1[3];
@@ -126,6 +125,7 @@ int compute_vnormal_smooth(Mesh* mesh) {
 //        which results in a very large number of unnecessary checks. can we eliminate that behavior?
 // @NOTE: deduplication helps with smooth shading, but in the end especially with texture uv coords we will still need
 //        to use face-vertices on gpu. Time spent improving this is probably not productive.
+// returns -1 on error or num of duplicates dropped on success
 int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	struct HashNode {
 		unsigned int data; // map vertex.pos -> index in the new vertex array (vertex_list[data].pos is the key to match)
@@ -172,7 +172,6 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	}
 
 	int dupe_count = mesh->num_vertices - vertex_index;
-	printf("  duplicates dropped = %d\n", dupe_count);
 
 	// free the map's contents
 	for (int i = 0; i < map_size; i++) {
@@ -189,7 +188,7 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	mesh->vertices = (Vertex*)realloc(new_vertex_list, vertex_index*sizeof(Vertex));
 	mesh->num_vertices = vertex_index;
 
-	return 0;
+	return dupe_count;
 }
 
 // Mutates the size of the mesh to 3*(num_faces) vertices.
@@ -221,7 +220,6 @@ int realloc_mesh_with_face_vertices(Mesh* mesh) {
 // Compute vnormals for flat shading. Each vertex of a face uses the face's normal.
 // @NOTE: assuming CCW face orientation, faces are triangles, vertex list is face-vertex
 int compute_vnormal_flat(Mesh* mesh) {
-	printf("  computing vnormal flat\n");
 	// for each face:
 	// e1 = v2 - v1, e2 = v3 - v2
 	// fnormal = normalize(cross(e1, e2))
@@ -1115,35 +1113,38 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		initMesh(mesh);
 		mesh->name = (char*)malloc(strlen(list_of_meshes[i]) + 1);
 		strcpy(mesh->name, list_of_meshes[i]);
-		printf("loading mesh from file: %s\n", list_of_meshes[i]);
+		printf("loading mesh from file: %s...", list_of_meshes[i]);
 		tic();
 		if (!malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh)) { 
-			printf("malloc_mesh_fields_from_obj_file returned 0 in initGlobalResourcePoolMallocMeshAndMeshFields for mesh %s\n", mesh->name);
+			printf(" | ERROR: malloc_mesh_fields_from_obj_file returned 0 in initGlobalResourcePoolMallocMeshAndMeshFields for mesh %s\n", mesh->name);
 			free(mesh);
 			continue; 
 		}
-		printf("  TIME LOAD %s: %.6f ms\n", list_of_meshes[i], toc());
+		printf("(%.3f ms)\n", toc());
 		// if we couldn't load normals from file, then compute them now
 		if (!mesh->has_normals) {
-			printf("  Normals not found. Computing normals and rebuilding mesh.\n");
+			printf("  >> Normals not found. Computing");
 			tic();
 			if (vnormal_style == 0) {
+				printf(" flat normals...");
 				realloc_mesh_with_face_vertices(mesh);
 				compute_vnormal_flat(mesh);
 			} else if (vnormal_style == 1) {
+				printf(" smooth normals...");
 				const int tol = 5;
-				deduplicate_mesh_vertices(mesh, tol);
+				int dupe_count = deduplicate_mesh_vertices(mesh, tol);
+				printf("(dropped dupes: %d)...", dupe_count);
 				compute_vnormal_smooth(mesh);
 			} else {
-				printf("  Warning: vnormal_style not set. Unable to load normals.\n");
+				printf(" | WARNING: vnormal_style not set. Unable to load normals.\n");
 			}
-			printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", mesh->name, toc());
+			printf("(%.3f ms)\n", toc());
 		}
 
 		// @NOTE: We are not writing normals back to the file.
 		//   We probably shouldn't mutate resources unless specifically saved from the program, except maybe as one-time processing.
 		//   Maybe we write a new function to serialize the whole mesh (with vnormal) back.
-		printf("  v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
+		printf("  >> v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
 		addMeshToGlobalPool(mesh);
 		uploadMeshBuffers(mesh);
 	}
@@ -1154,7 +1155,7 @@ void initGlobalScene() {
 	initCamera(global_scene.camera);
 	initLightSource(global_scene.lightSource);
 	initMouseInfo(global_scene.mouse);
-	tic(); initSkybox(); printf("SKYBOX LOAD: %.6f ms\n", toc());
+	tic(); initSkybox(); printf("SKYBOX LOAD: %.3f ms\n", toc());
 	global_scene.meshInstanceCount = 0;
 }
 // ===== END INIT FUNCTIONS =====
@@ -1639,7 +1640,7 @@ void executeConvexHulls() {
 	for (int i = 0; i < meshCountBeforeHulls; i++) {
 		tic();
 		hull = makeConvexHull(global_resource_pool.meshes[i]);
-		printf("  >> convex hull in %.6f ms for %s\n", toc(), global_resource_pool.meshes[i]->name);
+		printf("  >> convex hull in %.3f ms for %s\n", toc(), global_resource_pool.meshes[i]->name);
 		if (hull != nullptr) {
 			hullId = addMeshToGlobalPool(hull);
 			global_resource_pool.meshes[i]->hullId = hullId;
