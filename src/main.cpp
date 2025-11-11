@@ -862,6 +862,8 @@ int initMesh(Mesh* mesh) {
 	mesh->has_convex_hull = false;
 	mesh->hullId = 0;
 
+	mesh->name = nullptr;
+
 	// Build VAO, VBO, EBOs for each mesh in the scene
 	// Vertex Attribute Object (VAO): tracks buffers and attribute locations within buffers
 	// Vertex Buffer Object (VBO): physical buffer for vertex data
@@ -1100,7 +1102,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		,"resources/mesh/box.obj"
 		,"resources/mesh/teapot2.obj"
 		,"resources/mesh/guy.obj"
-		//,"resources/large_files/HP_Portrait.obj"
+		,"resources/large_files/HP_Portrait.obj"
 		//,"resources/large_files/kayle.obj"
 		//,"resources/extra_mesh/elf.obj"
 	};
@@ -1111,10 +1113,12 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	for (int i = 0; i < sizeof(list_of_meshes)/sizeof(list_of_meshes[0]); i++) {
 		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
 		initMesh(mesh);
+		mesh->name = (char*)malloc(strlen(list_of_meshes[i]) + 1);
+		strcpy(mesh->name, list_of_meshes[i]);
 		printf("loading mesh from file: %s\n", list_of_meshes[i]);
 		tic();
 		if (!malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh)) { 
-			printf("malloc_mesh_fields_from_obj_file returned 0 in initGlobalResourcePoolMallocMeshAndMeshFields for mesh %s\n", list_of_meshes[i]);
+			printf("malloc_mesh_fields_from_obj_file returned 0 in initGlobalResourcePoolMallocMeshAndMeshFields for mesh %s\n", mesh->name);
 			free(mesh);
 			continue; 
 		}
@@ -1133,12 +1137,12 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 			} else {
 				printf("  Warning: vnormal_style not set. Unable to load normals.\n");
 			}
-			printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", list_of_meshes[i], toc());
+			printf("  TIME COMPUTE NORMALS %s: %.6f ms\n", mesh->name, toc());
 		}
-		// @TODO: write normals back to file?
-		// @NOTE:
-		// We probably shouldn't auto mutate resources unless specifically saved from the program, except maybe as one-time processing.
-		// Maybe we write a new function to serialize the whole mesh (with vnormal) back.
+
+		// @NOTE: We are not writing normals back to the file.
+		//   We probably shouldn't mutate resources unless specifically saved from the program, except maybe as one-time processing.
+		//   Maybe we write a new function to serialize the whole mesh (with vnormal) back.
 		printf("  v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
 		addMeshToGlobalPool(mesh);
 		uploadMeshBuffers(mesh);
@@ -1160,6 +1164,8 @@ void initGlobalScene() {
 // output: mesh representing the convex hull
 // quickhull algorithm
 Mesh* makeConvexHull(Mesh* mesh) {
+	const float __CONVEX_HULL_EPS__     = 1e-6f;
+	const int   __CONVEX_HULL_INV_EPS__ = 1e6;
 	// smaller vertex for algorithm
 	struct Point {
 		float pos[3];
@@ -1203,7 +1209,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		set_triangle_normal(currentFacet->normal, pointList[(indexA)].pos, pointList[(indexB)].pos, pointList[(indexC)].pos);\
 		/* if normal . (A - centroid) < 0, then our normal points inward so reorient the triangle */\
 		sub3f(interiorToA, pointList[(indexA)].pos, (pInterior).pos);\
-		if (dot3f(currentFacet->normal, interiorToA) < 0) {\
+		if (dot3f(currentFacet->normal, interiorToA) < 0.0f) {\
 			negate3f_inplace(currentFacet->normal);\
 			currentFacet->points[1] = (indexC);\
 			currentFacet->points[2] = (indexB);\
@@ -1251,25 +1257,19 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			VertexHashSetNode* next;
 		};
 
-		// set tolerance levels for float[3] equivalence
-		const int tol = 5;
-		int decimalFilter = 1;
-		for (int i = 0; i < tol; i++) decimalFilter *= 10;
-		const float eps = 1.0f/(float)decimalFilter;
-
 		// use a hash set to dedup vertices
 		size_t set_size = mesh->num_vertices;
 		VertexHashSetNode** set = (VertexHashSetNode**)calloc(set_size, sizeof(VertexHashSetNode*));
 		if (set == nullptr) { fprintf(stderr, "Failed to malloc hash set in makeConvexHull\n"); free(pointList); return nullptr; }
 		for (int i = 0; i < mesh->num_vertices; i++) {
 			Vertex* v = &(mesh->vertices[i]);
-			unsigned int hash = float3Hash(v->pos, decimalFilter) % set_size;
+			unsigned int hash = float3Hash(v->pos, __CONVEX_HULL_INV_EPS__);
 
 			// check if vertex is in set
-			VertexHashSetNode** ptr = &set[hash];
+			VertexHashSetNode** ptr = &set[hash % set_size];
 			bool found = false;
 			while (*ptr != NULL) {
-				if (equals3f((*ptr)->vertex->pos, v->pos, eps)) {
+				if (equals3f((*ptr)->vertex->pos, v->pos, __CONVEX_HULL_EPS__)) {
 					found = true;
 					break;
 				}
@@ -1297,12 +1297,11 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		free(set);
 		pointList = (Point*)realloc(pointList, pointListSize * sizeof(Point));
 	}
-	printf("(CONVEX HULL): vertices deduplicated: %d (before) | %d (after)\n", mesh->num_vertices, pointListSize);
+	// printf("(CONVEX HULL): vertices deduplicated: %d --> %d \n", mesh->num_vertices, pointListSize);
 	// ===== END DEDUP PASS =====
 
 	// ===== BEGIN QUICKHULL =====
 	// TODO: benchmark quickhull vs the rest of makeConvexHull
-	printf("(CONVEX HULL): >> BEGIN QUICKHULL\n");
 	// list of facets used in convex hull, size may exceed cap and trigger realloc
 	size_t facetListSize = 0;
 	size_t facetListCap = maxi(4, mesh->num_faces);
@@ -1316,7 +1315,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	if (!ridgeMap) { fprintf(stderr, "Failed to malloc ridgeMap in makeConvexHull\n"); free(pointList); free(facetList); return NULL; }
 
 	// initial simplex:
-	// p0, p1 are min/max of one dim of above
+	// p0, p1 are min/max of one dimension
 	// p2 is argmax distance from p1p2 segment
 	// p3 is argmax distance from p1p2p3 plane
 	unsigned int p0, p1, p2, p3;
@@ -1337,9 +1336,8 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// distance(p, p0p1) = ||(p - p0) x (p1 - p0)|| / || p1 - p0 ||
 	//   but we can just check || (p - p0) x (p1 - p0) ||^2
 	p2 = 0;
-	float maxDist;
 	{
-		maxDist = 0;
+		float maxDist = 0.0f;
 		float distance;
 		float newSegment[3]; // p - p0
 		float segment[3]; // p1 - p0
@@ -1361,7 +1359,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// normal(p0p1p2) = normalize((p2 - p0) x (p1 - p0))
 	// distance(p, p0p1p2) = abs( (p2 - p0) . (normal) ) 
 	{
-		maxDist = 0;
+		float maxDist = 0.0f;
 		float distance;
 		float segP0P2[3];
 		float segP0P1[3];
@@ -1372,8 +1370,6 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		cross3f(normal, segP0P2, segP0P1);
 		normalize3f_inplace(normal); // this is a normal vector to the p1p2p3 triangle
 		p3 = 0;
-		maxDist = 0;
-		distance = 0;
 		for (int i = 0; i < pointListSize; i++) {
 			if (i == p0 || i == p1 || i == p2) continue;
 			sub3f(segP0Pi, pointList[i].pos, pointList[p0].pos);
@@ -1423,7 +1419,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		Facet* assignedFacet;
 		for (size_t i = 0; i < pointListSize; i++) {
 			if (i == p0 || i == p1 || i == p2 || i == p3) continue;
-			maxDist = 0;
+			maxDist = 0.0f;
 			assignedFacet = nullptr;
 			for (size_t j = 0; j < facetListSize; j++) {
 				distance = dot3f(pointList[i].pos, facetList[j].normal) - facetList[j].offset;
@@ -1439,8 +1435,6 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		}
 	}
 
-	printf("(CONVEX HULL): Total interior points (discarded): %d\n", pointListSize - (facetList[0].extPointListDA.length + facetList[1].extPointListDA.length + facetList[2].extPointListDA.length + facetList[3].extPointListDA.length + 4));
-
 	// Main loop:
 	//  1. Take a facet that is both active and has exterior points
 	//  2. Find the point p which is farthest outside that facet (max perp. distance)
@@ -1453,7 +1447,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 
 		// get farthest point
 		unsigned int p = facetList[i].extPointListDA.items[0];
-		float maxDist = 0;
+		float maxDist = 0.0f;
 		float dist;
 		for (size_t j = 0; j < facetList[i].extPointListDA.length; j++) {
 			dist = dot3f(pointList[facetList[i].extPointListDA.items[j]].pos, facetList[i].normal) - facetList[i].offset;
@@ -1471,14 +1465,12 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			}
 		}
 
-		// horizon edge check
-		//   For each visible facet:
-		//      For each edge of facet:
-		//          If facet across edge is not visible, then this is a horizon edge
-		//          NOTE: facet across edge will be oriented opposite (facet1: (AB) --> facet2: (BA))
-		//   For all horizon edges (points X, Y): Form new facet (X, Y, P) with correct orientation
-		//   Distribute all exterior points from visible facets to the newly created facets
-		//   Facets marked as visible (and thus have no exterior points) will be marked inactive
+		// horizon edge check and create new facets
+		// For each visible facet:
+		//   For each edge of facet:
+		//     If adjacent facet across ridge is not visible, then this is a horizon edge
+		//     NOTE: orientation of ridge reverses; facet1 with (A->B) ==> facet2 with (B->A)
+		// For all horizon edges (points A, B): Form new facet (A, B, P) with corrected orientation
 		IndexList newFacetIndices = {NULL, 0, 0};
 		for (size_t j = 0; j < facetListSize; j++) {
 			if (!facetList[j].isActive || !facetList[j].isVisible || facetList[j].isNew) continue;
@@ -1492,7 +1484,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 				while (*ptr != NULL && (*ptr)->key != hash) {
 					ptr = &((*ptr)->next);
 				}
-				if (*ptr == NULL) { printf("(CONVEX HULL): PANIC; RIDGE NOT FOUND: facetList[%u].points[%u//%u]\n", j, B, A); continue; }
+				if (*ptr == NULL) { printf("(CONVEX HULL): PANIC; RIDGE NOT FOUND: facetList[%zu].points[%u//%u]\n", j, B, A); continue; }
 				if (!facetList[(*ptr)->val].isVisible) {
 					da_append(newFacetIndices, facetListSize);
 					if (facetListSize >= facetListCap) {
@@ -1504,6 +1496,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			}
 		}
 
+		// reassign exterior points to new facets
 		// TODO: benchmark this loop
 		for (size_t j = 0; j < facetListSize; j++) {
 			if (facetList[j].isActive && facetList[j].isVisible) {
@@ -1515,7 +1508,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 					size_t test_point_index = facetList[j].extPointListDA.items[k];
 					if (test_point_index == p) continue; // dont reassign active point
 					// reassign to new facets
-					maxDist = 0;
+					maxDist = 0.0f;
 					assignedFacet = nullptr;
 					for (size_t w = 0; w < newFacetIndices.length; w++) {
 						size_t test_facet_index = newFacetIndices.items[w];
@@ -1529,6 +1522,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 						da_append(assignedFacet->extPointListDA, test_point_index);
 					}
 				}
+				// destroy the visible facet
 				free(facetList[j].extPointListDA.items);
 				facetList[j].extPointListDA = {NULL, 0, 0};
 				facetList[j].isActive = false;
@@ -1536,6 +1530,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 			}
 		}
 
+		// update ridge map
 		for (size_t j = 0; j < facetListSize; j++) {
 			if (!facetList[j].isNew) continue;
 			uint64_t hash[3];
@@ -1552,7 +1547,6 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		newFacetIndices = {NULL, 0, 0};
 	}
 	// ===== END QUICKHULL =====
-	printf("(CONVEX HULL): << END QUICKHULL\n");
 
 	// ===== BUILD MESH FROM CONVEX HULL =====
 	// now the convex hull is created, we stuff this in a mesh
@@ -1607,16 +1601,17 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	convexHull->num_vertices = vertexIndex;
 	// ===== END MESH BUILDING =====
 
+	// ===== BEGIN CLEANUP =====
+	#undef da_append
+	#undef insert_ridge_map
+	#undef new_facet
+
 	for (int i = 0; i < facetListSize; i++) {
 		if (facetList[i].extPointListDA.items != NULL) {
 			free(facetList[i].extPointListDA.items);
 			facetList[i].extPointListDA = {NULL, 0, 0};
 		}
 	}
-
-	#undef da_append
-	#undef insert_ridge_map
-	#undef new_facet
 
 	for (int i = 0; i < ridgeMapSize; i++) {
 		RidgeMapNode* ptr = ridgeMap[i];
@@ -1630,35 +1625,46 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	free(ridgeMap);
 	free(pointList);
 	free(facetList);
+	// ===== END CLEANUP =====
+
 	return convexHull;
 }
 
 // wrapper function for building convex hulls and adding to scene
 void executeConvexHulls() {
+	printf("executeConvexHulls:\n");
 	Mesh* hull;
 	const int meshCountBeforeHulls = global_resource_pool.meshCount;
 	unsigned int hullId;
 	for (int i = 0; i < meshCountBeforeHulls; i++) {
-		printf(">> building convex hull:\n");
 		tic();
 		hull = makeConvexHull(global_resource_pool.meshes[i]);
-		printf(">> convex hull in %.6f ms\n", toc());
+		printf("  >> convex hull in %.6f ms for %s\n", toc(), global_resource_pool.meshes[i]->name);
 		if (hull != nullptr) {
 			hullId = addMeshToGlobalPool(hull);
 			global_resource_pool.meshes[i]->hullId = hullId;
 			global_resource_pool.meshes[i]->has_convex_hull = true;
 			uploadMeshBuffers(hull);
 		} else {
-			printf("makeConvexHull(meshes[%d]) returned nullptr\n", i);
+			printf("  ERROR: makeConvexHull(meshes[%d]) returned nullptr\n", i);
 		}
 	}
+	printf("executeConvexHulls completed\n");
+}
+
+// print the global resource pool for debugging
+void printGlobalResourcePool() {
 	printf("global_resource_pool looks like:\n");
-	printf(">> size = %d\n", global_resource_pool.meshCount);
+	printf("  >> num_meshes = %d\n", global_resource_pool.meshCount);
 	for (int i = 0; i < global_resource_pool.meshCount; i++) {
-		printf(">> meshes[%d] has_convex_hull: %d\n", i, global_resource_pool.meshes[i]->has_convex_hull);
-		printf(">> meshes[%d] hullId: %d\n", i, global_resource_pool.meshes[i]->hullId);
+		printf("    meshes[%d] f: %zu v: %zu", i, global_resource_pool.meshes[i]->num_faces, global_resource_pool.meshes[i]->num_vertices);
+		if (global_resource_pool.meshes[i]->has_convex_hull) {
+			printf(" | HAS HULLID: %d", global_resource_pool.meshes[i]->hullId);
+		} else if (global_resource_pool.meshes[i]->hullId == -1) {
+			printf(" | IS HULL");
+		}
+		printf("\n");
 	}
-	printf("exiting executeConvexHulls()\n");
 }
 
 

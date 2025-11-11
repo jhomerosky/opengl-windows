@@ -31,6 +31,8 @@ struct Mesh {
 	bool has_convex_hull;
 	int hullId; // -1 if we are a hull, otherwise point into global mesh pool
 
+	char* name; // string name to recognize the hull
+
 	unsigned int VAO;
 	unsigned int VBO;
 	unsigned int EBO;
@@ -38,6 +40,7 @@ struct Mesh {
 
 // frees the mesh and mesh contents
 void free_mesh(Mesh* mesh) {
+	free(mesh->name);
 	free(mesh->vertices);
 	free(mesh->faces);
 	free(mesh);
