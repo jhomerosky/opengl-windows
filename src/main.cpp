@@ -255,7 +255,7 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 }
 
 // Mutates the size of the mesh to 3*(num_faces) vertices.
-// Face-vertices: a vertex contains { pos, vn, uv } so consider each vertex with the face it belongs to
+// Face-vertices: a vertex contains { pos, vn, uv } not just position. So consider a face-vertex as the unique combination of vertex and the face that uses it.
 int realloc_mesh_with_face_vertices(Mesh* mesh) {
 	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces);
 	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in realloc_mesh_with_face_vertices\n"); return -1; }
@@ -1738,7 +1738,7 @@ void printGlobalResourcePool() {
 	printf("global_resource_pool looks like:\n");
 	printf("  >> num_meshes = %d\n", global_resource_pool.meshCount);
 	for (int i = 0; i < global_resource_pool.meshCount; i++) {
-		printf("    meshes[%d] f: %zu v: %zu", i, global_resource_pool.meshes[i]->num_faces, global_resource_pool.meshes[i]->num_vertices);
+		printf("  meshes[%d] f: %zu v: %zu", i, global_resource_pool.meshes[i]->num_faces, global_resource_pool.meshes[i]->num_vertices);
 		if (global_resource_pool.meshes[i]->has_convex_hull) {
 			printf(" | HAS HULLID: %d", global_resource_pool.meshes[i]->hullId);
 		} else if (global_resource_pool.meshes[i]->hullId == -1) {
@@ -1779,6 +1779,7 @@ int main(int argc, char** argv) {
 
 	// ================ Playground to test 3D algorithms before render loop ===================
 	executeConvexHulls();
+	printGlobalResourcePool();
 	// ================ end playground ================
 
 
