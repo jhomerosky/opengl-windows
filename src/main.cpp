@@ -1738,7 +1738,7 @@ void printGlobalResourcePool() {
 	printf("global_resource_pool looks like:\n");
 	printf("  >> num_meshes = %d\n", global_resource_pool.meshCount);
 	for (int i = 0; i < global_resource_pool.meshCount; i++) {
-		printf("    meshes[%d] f: %zu v: %zu", i, global_resource_pool.meshes[i]->num_faces, global_resource_pool.meshes[i]->num_vertices);
+		printf("  meshes[%d] f: %zu v: %zu", i, global_resource_pool.meshes[i]->num_faces, global_resource_pool.meshes[i]->num_vertices);
 		if (global_resource_pool.meshes[i]->has_convex_hull) {
 			printf(" | HAS HULLID: %d", global_resource_pool.meshes[i]->hullId);
 		} else if (global_resource_pool.meshes[i]->hullId == -1) {
@@ -1779,6 +1779,7 @@ int main(int argc, char** argv) {
 
 	// ================ Playground to test 3D algorithms before render loop ===================
 	executeConvexHulls();
+	printGlobalResourcePool();
 	// ================ end playground ================
 
 
