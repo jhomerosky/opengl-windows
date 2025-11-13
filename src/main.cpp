@@ -790,6 +790,63 @@ Mesh* makeConvexHull(Mesh* mesh) {
 
 	return convexHull;
 }
+
+// support of mesh along direction dir with normal transform T
+// TODO: unfinished
+unsigned int support(Mesh* mesh, float dir[3], float T[9]) {
+	float local_dir[3];
+	matvec3(local_dir, T, dir);
+	unsigned int res = 0;
+	float maxDist = 0.0f;
+	float distance = 0.0f;
+	for (size_t i = 0; i < mesh->num_vertices; i++) {
+		distance = dot3f(mesh->vertices[i].pos, dir);
+		if (distance > maxDist) { 
+			maxDist = distance;
+			res = i;
+		}
+	}
+	return 0;
+}
+
+// input: two mesh instances
+// output: true if mesh instances collide; false otherwise
+bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
+	if (!global_resource_pool.meshes[objectA->globalMeshId]->has_convex_hull) return false;
+	if (!global_resource_pool.meshes[objectB->globalMeshId]->has_convex_hull) return false;
+	Mesh* hullA = global_resource_pool.meshes[global_resource_pool.meshes[objectA->globalMeshId]->hullId];
+	Mesh* hullB = global_resource_pool.meshes[global_resource_pool.meshes[objectB->globalMeshId]->hullId];
+
+	struct Simplex { 
+		float points[4][3]; 
+		float length;
+	};
+
+	Simplex simplex = {0};
+	float dir[3] = {0};
+
+	// transform dir to local coords before passing to support function
+	// transform result back to world coords
+
+	// initialize first point, add to simplex, get direction from pA -> 0
+	// pA = support(hA, dir, hA->normal) - support(hB, -dir. hB->normal)
+	// simplex = {pA}
+	// dir = {-pA}
+
+	const int __MAX_ITER__ = 30;
+	int iter = 0;
+	while (iter < __MAX_ITER__) {
+	//   pt = support(hA, dir, hA->normal) - support(hB, -dir, hB->normal)
+	//   if dot(pt, dir) < 0
+	//		return false // no intersection
+	//   simplex = {pt} union simplex
+	//   if (update_simplex(&simplex, &direction))
+	//   	return true
+		iter++;
+	}
+
+	return false;
+}
 // ===== END GEOMETRY FUNCTIONS =====
 
 
