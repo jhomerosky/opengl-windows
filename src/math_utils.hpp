@@ -28,6 +28,7 @@ static inline void mult3f(float out[3], const float in[3], const float factor);
 static inline void cross3f(float out[3], const float v1[3], const float v2[3]);
 static inline void normalize3f_inplace(float v[3]);
 static inline bool equals3f(const float v1[3], const float v2[3], const float eps);
+static inline void matvec3(float out[3], const float mat[9], const float v[3]);
 static inline void mat4_mul(float out[16], const float A[16], const float B[16]);
 static inline void set_perspective_mat(float out[16], const float fovy, const float aspect, const float near, const float far);
 static inline void set_lookat_mat(float out[16], const float eye[3], const float front[3], const float up[3]);
@@ -37,6 +38,8 @@ static inline void set_scale_mat(float out[16], const float scale[3]);
 static inline void set_normal_mat(float out[9], const float rotate[16], const float scale[3]);
 static inline void remove_translation_mat4(float mat[16]);
 static inline void set_triangle_normal(float out[3], const float A[3], const float B[3], const float C[3]);
+// TODO: implement the inverse, if needed. right now this is only needed in the support function to invert the normal mat, so maybe some special way to inverse
+static inline void inverse_mat3(float out[9], float in[9]);
 // ===== end header =====
 
 // get a seed for the srand function
@@ -184,6 +187,13 @@ static inline void set3fv(float out[3], const float in[3]) { memcpy(out, in, 3*s
 
 static inline void set4f(float out[4], const float f0, const float f1, const float f2, const float f3) { out[0] = f0; out[1] = f1; out[2] = f2; out[3] = f3; }
 static inline void set4fv(float out[4], const float in[4]) { memcpy(out, in, 4*sizeof(float)); }
+
+// mult out = Mv; safe for v = Mv
+static inline void matvec3(float out[3], const float mat[9], const float v[3]) {
+	out[0] = mat[0] * v[0] + mat[4] * v[1] + mat[7] * v[2];
+	out[1] = mat[1] * v[0] + mat[5] * v[1] + mat[8] * v[2];
+	out[2] = mat[2] * v[0] + mat[6] * v[1] + mat[9] * v[2];
+}
 
 // mat4_mul(out, A, B) --> out = AB (safe for A=AB)
 static inline void mat4_mul(float out[16], const float A[16], const float B[16]) {
