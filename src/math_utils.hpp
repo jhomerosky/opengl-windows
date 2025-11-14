@@ -21,6 +21,7 @@ static inline float dot3f(const float u[3], const float v[3]);
 static inline float dot4f(const float u[4], const float v[4]);
 static inline float fast_rsqrt(float number);
 static inline void quat_mult(float p[4], float q[4], float res[4]);
+static inline void negate3f(float out[3], float in[3]);
 static inline void negate3f_inplace(float out[3]);
 static inline void add3f(float out[3], const float v1[3], const float v2[3]);
 static inline void sub3f(float out[3], const float v1[3], const float v2[3]);
@@ -29,6 +30,7 @@ static inline void cross3f(float out[3], const float v1[3], const float v2[3]);
 static inline void normalize3f_inplace(float v[3]);
 static inline bool equals3f(const float v1[3], const float v2[3], const float eps);
 static inline void matvec3(float out[3], const float mat[9], const float v[3]);
+static inline void matvec4(float out[4], const float mat[16], const float v[4]);
 static inline void mat4_mul(float out[16], const float A[16], const float B[16]);
 static inline void set_perspective_mat(float out[16], const float fovy, const float aspect, const float near, const float far);
 static inline void set_lookat_mat(float out[16], const float eye[3], const float front[3], const float up[3]);
@@ -69,7 +71,15 @@ static inline bool equals3f(const float v1[3], const float v2[3], const float ep
 	);
 }
 
+// out = -in; safe for out = -out;
+static inline void negate3f(float out[3], float in[3]) {
+	out[0] = -in[0];
+	out[1] = -in[1];
+	out[2] = -in[2];
+}
+
 // out = -out
+// @TODO: evaluate if we can get rid of this and only use above negate3f which also accepts in place arguments
 static inline void negate3f_inplace(float out[3]) {
 	out[0] = -out[0];
 	out[1] = -out[1];
@@ -190,9 +200,16 @@ static inline void set4fv(float out[4], const float in[4]) { memcpy(out, in, 4*s
 
 // mult out = Mv; safe for v = Mv
 static inline void matvec3(float out[3], const float mat[9], const float v[3]) {
-	out[0] = mat[0] * v[0] + mat[4] * v[1] + mat[7] * v[2];
-	out[1] = mat[1] * v[0] + mat[5] * v[1] + mat[8] * v[2];
-	out[2] = mat[2] * v[0] + mat[6] * v[1] + mat[9] * v[2];
+	out[0] = mat[0] * v[0] + mat[3] * v[1] + mat[6] * v[2];
+	out[1] = mat[1] * v[0] + mat[4] * v[1] + mat[7] * v[2];
+	out[2] = mat[2] * v[0] + mat[5] * v[1] + mat[8] * v[2];
+}
+
+static inline void matvec4(float out[4], const float mat[16], const float v[4]) {
+	out[0] = mat[0] * v[0] + mat[4] * v[1] + mat[8]  * v[2] + mat[12] * v[3];
+	out[1] = mat[1] * v[0] + mat[5] * v[1] + mat[9]  * v[2] + mat[13] * v[3];
+	out[2] = mat[2] * v[0] + mat[6] * v[1] + mat[10] * v[2] + mat[14] * v[3];
+	out[3] = mat[3] * v[0] + mat[7] * v[1] + mat[11] * v[2] + mat[15] * v[3];
 }
 
 // mat4_mul(out, A, B) --> out = AB (safe for A=AB)

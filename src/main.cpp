@@ -31,6 +31,8 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol);
 int realloc_mesh_with_face_vertices(Mesh* mesh);
 int compute_vnormal_flat(Mesh* mesh);
 Mesh* makeConvexHull(Mesh* mesh);
+unsigned int support(Mesh* mesg, float dir[3]);
+bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB);
 
 // load from file
 int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh);
@@ -791,8 +793,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	return convexHull;
 }
 
-// support of mesh along direction dir with normal transform T
-// TODO: unfinished
+// return index of mesh vertex farthest along T*dir
 unsigned int support(Mesh* mesh, float dir[3], float T[9]) {
 	float local_dir[3];
 	matvec3(local_dir, T, dir);
@@ -800,13 +801,13 @@ unsigned int support(Mesh* mesh, float dir[3], float T[9]) {
 	float maxDist = 0.0f;
 	float distance = 0.0f;
 	for (size_t i = 0; i < mesh->num_vertices; i++) {
-		distance = dot3f(mesh->vertices[i].pos, dir);
+		distance = dot3f(mesh->vertices[i].pos, local_dir);
 		if (distance > maxDist) { 
 			maxDist = distance;
 			res = i;
 		}
 	}
-	return 0;
+	return res;
 }
 
 // input: two mesh instances
@@ -817,35 +818,102 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 	Mesh* hullA = global_resource_pool.meshes[global_resource_pool.meshes[objectA->globalMeshId]->hullId];
 	Mesh* hullB = global_resource_pool.meshes[global_resource_pool.meshes[objectB->globalMeshId]->hullId];
 
+	float modelA[16];
+	float normalA[9];
+
+	float modelB[16];
+	float normalB[9];
+
+	float translate_temp[16];
+	float rotate_temp[16];
+	float scale_temp[16];
+	set_translate_mat(translate_temp, objectA->pos);
+	set_rotation_mat(rotate_temp, objectA->rotation);
+	set_scale_mat(scale_temp, objectA->scale);
+	set_normal_mat(normalA, rotate_temp, objectA->scale);
+	mat4_mul(modelA, rotate_temp, scale_temp);
+	mat4_mul(modelA, translate_temp, modelA);
+
+	set_translate_mat(translate_temp, objectB->pos);
+	set_rotation_mat(rotate_temp, objectB->rotation);
+	set_scale_mat(scale_temp, objectB->scale);
+	set_normal_mat(normalB, rotate_temp, objectB->scale);
+	mat4_mul(modelB, rotate_temp, scale_temp);
+	mat4_mul(modelB, translate_temp, modelB);
+
 	struct Simplex { 
 		float points[4][3]; 
-		float length;
+		unsigned int length;
 	};
 
 	Simplex simplex = {0};
 	float dir[3] = {0};
+	float point[3] = {0};
 
 	// transform dir to local coords before passing to support function
 	// transform result back to world coords
 
 	// initialize first point, add to simplex, get direction from pA -> 0
 	// pA = support(hA, dir, hA->normal) - support(hB, -dir. hB->normal)
+	float supA[3];
+	float supB[3];
+	set3fv(supA, hullA->vertices[support(hullA, dir, normalA)].pos);
+	negate3f_inplace(dir);
+	set3fv(supB, hullB->vertices[support(hullB, dir, normalB)].pos);
+	// transform to world coords before subtracting
+	matvec4(supA, modelA, supA);
+	matvec4(supB, modelB, supB);
+	sub3f(point, supA, supB);
+
 	// simplex = {pA}
-	// dir = {-pA}
+	set3fv(simplex.points[0], point);
+	simplex.length = 1;
+
+	// dir = -pA
+	negate3f(dir, simplex.points[0]);
 
 	const int __MAX_ITER__ = 30;
 	int iter = 0;
 	while (iter < __MAX_ITER__) {
-	//   pt = support(hA, dir, hA->normal) - support(hB, -dir, hB->normal)
-	//   if dot(pt, dir) < 0
-	//		return false // no intersection
-	//   simplex = {pt} union simplex
-	//   if (update_simplex(&simplex, &direction))
-	//   	return true
+	    // pt = support(hA, dir, hA->normal) - support(hB, -dir, hB->normal)
+		set3fv(supA, hullA->vertices[support(hullA, dir, normalA)].pos);
+		negate3f_inplace(dir);
+		set3fv(supB, hullB->vertices[support(hullB, dir, normalB)].pos);
+		matvec4(supA, modelA, supA);
+		matvec4(supB, modelB, supB);
+		sub3f(point, supA, supB);
+
+		if (dot3f(point, dir) < 0) {
+			return false; // no intersection
+		}
+
+		// simplex = {pt} union simplex
+		set3fv(simplex.points[simplex.length], point);
+		simplex.length++;
+
+	    // if (update_simplex(&simplex, &direction))
+	    //     return true
+		switch(simplex.length) {
+			case 1:
+				// 1 point; set new direction only
+				negate3f(dir, simplex.points[0]);
+				break;
+			case 2:
+				// 2 points; either {A, B} --> {A} with dir = -A; or keep {A, B} with dir = (AB x AO) x AB
+				break;
+			case 3:
+				// 3 points; test if origin is outside AC or AB -> reject B or C; set dir = ???; otherwise keep and set dir = ???
+				break;
+			case 4:
+				// 4 points; test if origin is outside any facet -> reject pt not using that facet; set dir = ???
+				// if origin is inside simplex, return true
+				break;
+			default:
+				printf("Error: default in switch(simplex.length) in GJK_intersect on iteration %d with simplex.length=%u\n", iter, simplex.length);
+		}
 		iter++;
 	}
-
-	return false;
+	return false; // max iter reached with no intersection found
 }
 // ===== END GEOMETRY FUNCTIONS =====
 
