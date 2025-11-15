@@ -849,6 +849,14 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 	Simplex simplex = {0};
 	float dir[3] = {0};
 	float point[3] = {0};
+	float AO[3] = {0};
+	float AB[3] = {0};
+	float AC[3] = {0};
+	float AD[3] = {0};
+	float normal[3] = {0};
+	float crossvec_B[3] = {0};
+	float crossvec_C[3] = {0};
+	float crossvec_D[3] = {0};
 
 	// transform dir to local coords before passing to support function
 	// transform result back to world coords
@@ -896,17 +904,61 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 		switch(simplex.length) {
 			case 1:
 				// 1 point; set new direction only
-				negate3f(dir, simplex.points[0]);
+				negate3f(dir, simplex.points[simplex.length-1]);
 				break;
 			case 2:
-				// 2 points; either {A, B} --> {A} with dir = -A; or keep {A, B} with dir = (AB x AO) x AB
+				// 2 points; if B->A points in the direction of the origin
+				// Yes: simplex = {A};   dir = -A
+				// No:  simplex = {A,B}; dir = (AB x AO) x AB
+				negate3f(dir, simplex.points[simplex.length-1]); // dir = -A
+				sub3f(AB, simplex.points[0], simplex.points[simplex.length-1]);
+				if (dot3f(AB, dir) < 0) {
+					set3fv(simplex.points[0], simplex.points[simplex.length-1]); // copy A into first element
+					simplex.length--;
+				} else {
+					cross3f(normal, AB, dir);
+					cross3f(dir, normal, AB);
+				}
 				break;
 			case 3:
-				// 3 points; test if origin is outside AC or AB -> reject B or C; set dir = ???; otherwise keep and set dir = ???
+				// 3 points; test if origin is outside AC or AB:
+				// Yes: reject opposite point; set dir = (A(kept) x AO) x A(kept)
+				// No:  keep simplex and set dir = normal (oriented towards O)
+				negate3f(AO, simplex.points[simplex.length-1]);
+				sub3f(AB, simplex.points[0], simplex.points[simplex.length-1]);
+				sub3f(AC, simplex.points[1], simplex.points[simplex.length-1]);				
+				cross3f(normal, AB, AC);
+				cross3f(crossvec_B, AB, AO);
+				cross3f(crossvec_C, AO, AC);
+
+				if (dot3f(normal, AO) < 0) {
+					negate3f_inplace(normal);
+				}
+				set3fv(dir, normal);
+				
+				if (dot3f(normal, crossvec_B) < 0) {
+					// reject C
+					set3fv(simplex.points[1], simplex.points[simplex.length-1]);
+					simplex.length--;
+					cross3f(dir, crossvec_B, AB);
+				} else if (dot3f(normal, crossvec_C) < 0) {
+					// reject B
+					set3fv(simplex.points[0], simplex.points[simplex.length-1]);
+					simplex.length--;
+					cross3f(dir, AC, crossvec_C);
+				}
 				break;
 			case 4:
 				// 4 points; test if origin is outside any facet -> reject pt not using that facet; set dir = ???
 				// if origin is inside simplex, return true
+				negate3f(AO, simplex.points[simplex.length-1]);
+				sub3f(AB, simplex.points[0], simplex.points[simplex.length-1]);
+				sub3f(AC, simplex.points[1], simplex.points[simplex.length-1]);
+				sub3f(AD, simplex.points[2], simplex.points[simplex.length-1]);
+				cross3f(normal, AB, AC);
+				cross3f(crossvec_B, AB, AO);
+				cross3f(crossvec_C, AO, AC);
+				cross3f(crossvec_D, AD, AO);
 				break;
 			default:
 				printf("Error: default in switch(simplex.length) in GJK_intersect on iteration %d with simplex.length=%u\n", iter, simplex.length);
