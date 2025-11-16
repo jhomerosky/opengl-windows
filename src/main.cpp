@@ -73,6 +73,7 @@ void initGlobalScene();
 
 // algorithm handlers
 void executeConvexHulls();
+void executeGJKIntersect();
 
 // print
 void printGlobalResourcePool();
@@ -794,13 +795,13 @@ Mesh* makeConvexHull(Mesh* mesh) {
 }
 
 // return index of mesh vertex farthest along T*dir
-unsigned int support(Mesh* mesh, float dir[3], float T[9]) {
+unsigned int support(const Mesh* mesh, const float dir[3], const float T[9]) {
 	float local_dir[3];
 	matvec3(local_dir, T, dir);
+	float distance;
+	float maxDist = dot3f(mesh->vertices[0].pos, local_dir);
 	unsigned int res = 0;
-	float maxDist = 0.0f;
-	float distance = 0.0f;
-	for (size_t i = 0; i < mesh->num_vertices; i++) {
+	for (size_t i = 1; i < mesh->num_vertices; i++) {
 		distance = dot3f(mesh->vertices[i].pos, local_dir);
 		if (distance > maxDist) { 
 			maxDist = distance;
@@ -819,10 +820,10 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 	Mesh* hullB = global_resource_pool.meshes[global_resource_pool.meshes[objectB->globalMeshId]->hullId];
 
 	float modelA[16];
-	float normalA[9];
+	float transformA[9];
 
 	float modelB[16];
-	float normalB[9];
+	float transformB[9];
 
 	float translate_temp[16];
 	float rotate_temp[16];
@@ -830,47 +831,49 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 	set_translate_mat(translate_temp, objectA->pos);
 	set_rotation_mat(rotate_temp, objectA->rotation);
 	set_scale_mat(scale_temp, objectA->scale);
-	set_normal_mat(normalA, rotate_temp, objectA->scale);
 	mat4_mul(modelA, rotate_temp, scale_temp);
 	mat4_mul(modelA, translate_temp, modelA);
-
+	set_normal_mat_inverse(transformA, rotate_temp, objectA->scale);
+	
 	set_translate_mat(translate_temp, objectB->pos);
 	set_rotation_mat(rotate_temp, objectB->rotation);
 	set_scale_mat(scale_temp, objectB->scale);
-	set_normal_mat(normalB, rotate_temp, objectB->scale);
 	mat4_mul(modelB, rotate_temp, scale_temp);
 	mat4_mul(modelB, translate_temp, modelB);
+	set_normal_mat_inverse(transformB, rotate_temp, objectB->scale);
 
 	struct Simplex { 
 		float points[4][3]; 
 		unsigned int length;
 	};
 
-	Simplex simplex = {0};
-	float dir[3] = {0};
-	float point[3] = {0};
-	float AO[3] = {0};
-	float AB[3] = {0};
-	float AC[3] = {0};
-	float AD[3] = {0};
-	float normal[3] = {0};
-	float crossvec_B[3] = {0};
-	float crossvec_C[3] = {0};
-	float crossvec_D[3] = {0};
+	Simplex simplex    = {0};
+	float dir[3]       = {1.0f, 0.0f, 0.0f};
+	float negdir[3]    = {0};
+	float supA[3]      = {0};
+	float supB[3]      = {0};
+	float point[3]     = {0};
+	float AO[3]        = {0};
+	float AB[3]        = {0};
+	float AC[3]        = {0};
+	float AD[3]        = {0};
+	float ABcrossAO[3] = {0};
+	float AOcrossAC[3] = {0};
+	float normalABC[3] = {0};
+	float normalABD[3] = {0};
+	float normalACD[3] = {0};
 
 	// transform dir to local coords before passing to support function
 	// transform result back to world coords
 
 	// initialize first point, add to simplex, get direction from pA -> 0
 	// pA = support(hA, dir, hA->normal) - support(hB, -dir. hB->normal)
-	float supA[3];
-	float supB[3];
-	set3fv(supA, hullA->vertices[support(hullA, dir, normalA)].pos);
-	negate3f_inplace(dir);
-	set3fv(supB, hullB->vertices[support(hullB, dir, normalB)].pos);
+	negate3f(negdir, dir);
+	set3fv(supA, hullA->vertices[support(hullA, dir, transformA)].pos);
+	set3fv(supB, hullB->vertices[support(hullB, negdir, transformB)].pos);
 	// transform to world coords before subtracting
-	matvec4(supA, modelA, supA);
-	matvec4(supB, modelB, supB);
+	matvec4_3fv_inplace(modelA, supA);
+	matvec4_3fv_inplace(modelB, supB);
 	sub3f(point, supA, supB);
 
 	// simplex = {pA}
@@ -880,23 +883,27 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 	// dir = -pA
 	negate3f(dir, simplex.points[0]);
 
+	printf("initial:\npoint=%.3f, %.3f, %.3f; dir=%.3f, %.3f, %.3f\n",point[0], point[1], point[2], dir[0], dir[1], dir[2]);
+
 	const int __MAX_ITER__ = 30;
 	int iter = 0;
 	while (iter < __MAX_ITER__) {
+		negate3f(negdir, dir);
 	    // pt = support(hA, dir, hA->normal) - support(hB, -dir, hB->normal)
-		set3fv(supA, hullA->vertices[support(hullA, dir, normalA)].pos);
-		negate3f_inplace(dir);
-		set3fv(supB, hullB->vertices[support(hullB, dir, normalB)].pos);
-		matvec4(supA, modelA, supA);
-		matvec4(supB, modelB, supB);
+		set3fv(supA, hullA->vertices[support(hullA, dir, transformA)].pos);
+		set3fv(supB, hullB->vertices[support(hullB, negdir, transformB)].pos);
+		matvec4_3fv_inplace(modelA, supA);
+		matvec4_3fv_inplace(modelB, supB);
 		sub3f(point, supA, supB);
 
-		if (dot3f(point, dir) < 0) {
+		if (dot3f(point, dir) < 0.0f) {
+			printf("  >> GJK_intersect: returning false at iter=%d\n",iter);
 			return false; // no intersection
 		}
 
-		// simplex = {pt} union simplex
+		// simplex = simplex union {pt}
 		set3fv(simplex.points[simplex.length], point);
+		unsigned int Aindex = simplex.length;
 		simplex.length++;
 
 	    // if (update_simplex(&simplex, &direction))
@@ -904,67 +911,90 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 		switch(simplex.length) {
 			case 1:
 				// 1 point; set new direction only
-				negate3f(dir, simplex.points[simplex.length-1]);
+				negate3f(dir, simplex.points[Aindex]);
 				break;
 			case 2:
 				// 2 points; if B->A points in the direction of the origin
 				// Yes: simplex = {A};   dir = -A
 				// No:  simplex = {A,B}; dir = (AB x AO) x AB
-				negate3f(dir, simplex.points[simplex.length-1]); // dir = -A
-				sub3f(AB, simplex.points[0], simplex.points[simplex.length-1]);
+				negate3f(dir, simplex.points[Aindex]); // dir = -A
+				sub3f(AB, simplex.points[0], simplex.points[Aindex]);
 				if (dot3f(AB, dir) < 0) {
-					set3fv(simplex.points[0], simplex.points[simplex.length-1]); // copy A into first element
+					set3fv(simplex.points[0], simplex.points[Aindex]); // copy A into first element
 					simplex.length--;
 				} else {
-					cross3f(normal, AB, dir);
-					cross3f(dir, normal, AB);
+					cross3f(ABcrossAO, AB, dir);
+					cross3f(dir, ABcrossAO, AB);
 				}
 				break;
 			case 3:
 				// 3 points; test if origin is outside AC or AB:
 				// Yes: reject opposite point; set dir = (A(kept) x AO) x A(kept)
 				// No:  keep simplex and set dir = normal (oriented towards O)
-				negate3f(AO, simplex.points[simplex.length-1]);
-				sub3f(AB, simplex.points[0], simplex.points[simplex.length-1]);
-				sub3f(AC, simplex.points[1], simplex.points[simplex.length-1]);				
-				cross3f(normal, AB, AC);
-				cross3f(crossvec_B, AB, AO);
-				cross3f(crossvec_C, AO, AC);
+				negate3f(AO, simplex.points[Aindex]);
+				sub3f(AB, simplex.points[0], simplex.points[Aindex]);
+				sub3f(AC, simplex.points[1], simplex.points[Aindex]);
+				cross3f(normalABC, AB, AC);
+				cross3f(ABcrossAO, AB, AO);
+				cross3f(AOcrossAC, AO, AC);
 
-				if (dot3f(normal, AO) < 0) {
-					negate3f_inplace(normal);
+				if (dot3f(normalABC, AO) < 0) {
+					negate3f_inplace(normalABC);
 				}
-				set3fv(dir, normal);
-				
-				if (dot3f(normal, crossvec_B) < 0) {
+
+				if (dot3f(normalABC, ABcrossAO) < 0) {
 					// reject C
-					set3fv(simplex.points[1], simplex.points[simplex.length-1]);
+					set3fv(simplex.points[1], simplex.points[Aindex]);
 					simplex.length--;
-					cross3f(dir, crossvec_B, AB);
-				} else if (dot3f(normal, crossvec_C) < 0) {
+					cross3f(dir, ABcrossAO, AB);
+				} else if (dot3f(normalABC, AOcrossAC) < 0) {
 					// reject B
-					set3fv(simplex.points[0], simplex.points[simplex.length-1]);
+					set3fv(simplex.points[0], simplex.points[Aindex]);
 					simplex.length--;
-					cross3f(dir, AC, crossvec_C);
+					cross3f(dir, AC, AOcrossAC);
+				} else {
+					set3fv(dir, normalABC);
 				}
 				break;
 			case 4:
-				// 4 points; test if origin is outside any facet -> reject pt not using that facet; set dir = ???
-				// if origin is inside simplex, return true
-				negate3f(AO, simplex.points[simplex.length-1]);
-				sub3f(AB, simplex.points[0], simplex.points[simplex.length-1]);
-				sub3f(AC, simplex.points[1], simplex.points[simplex.length-1]);
-				sub3f(AD, simplex.points[2], simplex.points[simplex.length-1]);
-				cross3f(normal, AB, AC);
-				cross3f(crossvec_B, AB, AO);
-				cross3f(crossvec_C, AO, AC);
-				cross3f(crossvec_D, AD, AO);
+				// 4 points; test if origin is outside any facet:
+				// Yes: reject opposite point; set dir = normal of remaining facet pointing to origin
+				// No:  return true; origin is inside simplex thus we have a collision
+				negate3f(AO, simplex.points[Aindex]);
+				sub3f(AB, simplex.points[0], simplex.points[Aindex]);
+				sub3f(AC, simplex.points[1], simplex.points[Aindex]);
+				sub3f(AD, simplex.points[2], simplex.points[Aindex]);
+				cross3f(normalABC, AB, AC); if (dot3f(normalABC, AD) > 0.0f) { negate3f_inplace(normalABC); }
+				cross3f(normalABD, AB, AD); if (dot3f(normalABD, AC) > 0.0f) { negate3f_inplace(normalABD); }
+				cross3f(normalACD, AC, AD); if (dot3f(normalACD, AB) > 0.0f) { negate3f_inplace(normalACD); }
+				if (dot3f(normalABC, AO) > 0) {
+					// reject D
+					set3fv(simplex.points[2], simplex.points[Aindex]);
+					simplex.length--;
+					set3fv(dir, normalABC);
+				} else if (dot3f(normalABD, AO) > 0) {
+					// reject C
+					set3fv(simplex.points[1], simplex.points[Aindex]);
+					simplex.length--;
+					set3fv(dir, normalABD);
+				} else if (dot3f(normalACD, AO) > 0) {
+					// reject B
+					set3fv(simplex.points[0], simplex.points[Aindex]);
+					simplex.length--;
+					set3fv(dir, normalACD);
+				} else {
+					// intersection found
+					printf("  [GJK_intersect]: collison detected on iter=%d\n", iter);
+					return true;
+				}
 				break;
 			default:
 				printf("Error: default in switch(simplex.length) in GJK_intersect on iteration %d with simplex.length=%u\n", iter, simplex.length);
 		}
+		printf("point=%.3f, %.3f, %.3f; dir=%.3f, %.3f, %.3f\n",point[0], point[1], point[2], dir[0], dir[1], dir[2]);
 		iter++;
 	}
+	printf("max_iter reached in GJK_intersect\n");
 	return false; // max iter reached with no intersection found
 }
 // ===== END GEOMETRY FUNCTIONS =====
@@ -1907,6 +1937,26 @@ void executeConvexHulls() {
 	printf("executeConvexHulls completed\n");
 }
 
+// Orchestrate GJK intersection algorithm
+void executeGJKIntersect() {
+	printf("executeGJKIntersect():\n");
+	if (global_scene.meshInstanceCount < 2) return;
+	for (size_t i = 0; i < global_scene.meshInstanceCount; i++) {
+		set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.5f, 0.0f);
+	}
+	for (size_t i = 0; i < global_scene.meshInstanceCount; i++) {
+		for (size_t j = i+1; j < global_scene.meshInstanceCount; j++) {
+			printf("  >> testing [%zu, %zu]...\n", i, j);
+			if (GJK_intersect(global_scene.meshInstances[i], global_scene.meshInstances[j])) {
+				printf("COLLISION!\n");
+				set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.0f, 0.0f);
+				set3f(global_scene.meshInstances[j]->hullColor, 1.0f, 0.0f, 0.0f);
+			} else {
+				printf("GOOD!\n");
+			}
+		}
+	}
+}
 // ===== END ALGORITHM HANDLERS =====
 
 // ===== PRINT FUNCTIONS =====
@@ -1957,6 +2007,7 @@ int main(int argc, char** argv) {
 	// ================ Playground to test 3D algorithms before render loop ===================
 	executeConvexHulls();
 	printGlobalResourcePool();
+	executeGJKIntersect();
 	// ================ end playground ================
 
 
