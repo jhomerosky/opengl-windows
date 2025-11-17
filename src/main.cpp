@@ -324,8 +324,8 @@ int compute_vnormal_flat(Mesh* mesh) {
 // output: mesh representing the convex hull
 // quickhull algorithm
 Mesh* makeConvexHull(Mesh* mesh) {
-	const float __CONVEX_HULL_DEDUP_EPS__     = 1e-1f;
-	const int   __CONVEX_HULL_DEDUP_INV_EPS__ = 1e1;
+	const float __CONVEX_HULL_DEDUP_EPS__     = 1e-6f;
+	const int   __CONVEX_HULL_DEDUP_INV_EPS__ = 1e6;
 	// smaller vertex for algorithm
 	struct Point {
 		float pos[3];
@@ -1366,6 +1366,9 @@ void updateTime(Metrics* metrics) {
 
 // physics for now
 void updateScene(GLFWwindow* window, float deltaTime) {
+	// handles collision detection
+	executeGJKIntersect();
+
 	// update position based on velocity vector
 	MeshInstance* active_instance;
 	for (int i = 0; i < global_scene.meshInstanceCount; i++) { 
@@ -1388,11 +1391,12 @@ void updateScene(GLFWwindow* window, float deltaTime) {
 	// 	}
 	// }
 
+	// for collision detection demo
+	float theta = deltaTime * 5.0f;
+	float demoRotate[4] = {cosf(theta), 0.0f, sinf(theta), 0.0f};
 	active_instance = global_scene.meshInstances[0];
 	active_instance->pos[0] += deltaTime;
-
-	// handles collision detection
-	executeGJKIntersect();
+	quat_mult_inplace(active_instance->rotation, demoRotate);
 }
 
 void renderScene(GLFWwindow* window) {
@@ -1854,9 +1858,9 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		,"resources/mesh/box.obj"
 		,"resources/mesh/teapot2.obj"
 		,"resources/mesh/guy.obj"
-		,"resources/large_files/HP_Portrait.obj"
+		//,"resources/large_files/HP_Portrait.obj"
 		//,"resources/large_files/kayle.obj"
-		,"resources/extra_mesh/elf.obj"
+		//,"resources/extra_mesh/elf.obj"
 	};
 	const int vnormal_style = 1; // { 0 = flat | 1 = smooth }
 	// this caused a bug because I'm trying to operate on elements of this array as if they were malloc'd individually
