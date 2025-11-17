@@ -135,7 +135,7 @@ static inline void quat_mult(float p[4], float q[4], float res[4]) {
 	// take a quaternion p, take p = (w, v) where w is scalar, v in R3
 	// resw = pw*qw - dot(pv, qv)
 	// resv = pw*qv + qw*pv + cross(pv, qv)
-	res[0] = -(p[1] * q[1] + p[2]*q[2] + p[3]*q[3]);
+	res[0] = -(p[1]*q[1] + p[2]*q[2] + p[3]*q[3]);
 	res[1] = p[2] * q[3] - p[3] * q[2];
     res[2] = p[3] * q[1] - p[1] * q[3];
     res[3] = p[1] * q[2] - p[2] * q[1];
@@ -144,6 +144,25 @@ static inline void quat_mult(float p[4], float q[4], float res[4]) {
 	res[1] += p[0] * q[1] + q[0] * p[1];
 	res[2] += p[0] * q[2] + q[0] * p[2];
 	res[3] += p[0] * q[3] + q[0] * p[3];
+}
+
+// p = pq
+static inline void quat_mult_inplace(float p[4], const float q[4]) {
+	float temp[4];
+	temp[0] = -(p[1]*q[1] + p[2]*q[2] + p[3]*q[3]);
+	temp[1] = p[2] * q[3] - p[3] * q[2];
+    temp[2] = p[3] * q[1] - p[1] * q[3];
+    temp[3] = p[1] * q[2] - p[2] * q[1];
+
+	temp[0] += p[0] * q[0];
+	temp[1] += p[0] * q[1] + q[0] * p[1];
+	temp[2] += p[0] * q[2] + q[0] * p[2];
+	temp[3] += p[0] * q[3] + q[0] * p[3];
+	
+	p[0] = temp[0];
+	p[1] = temp[1];
+	p[2] = temp[2];
+	p[3] = temp[3];
 }
 
 // rotate a quaternion p by q and replace p with the result
@@ -392,7 +411,7 @@ static inline void set_rotation_mat(float out[16], const float quat[4]) {
 
 	out[8]  =        2.0f*(xz + wy);
 	out[9]  =        2.0f*(yz - wx);
-	out[10] = 1.0f - 2.0f*(xx - yy);
+	out[10] = 1.0f - 2.0f*(xx + yy);
 	out[11] = 0.0f;
 
 	out[12] = 0.0f;
