@@ -1,5 +1,8 @@
+# Build artifacts
 .vscode/
-old/
 *.exe
+
+# Custom folders
 resources/large_files/
 resources/extra_mesh/
+artifacts/
