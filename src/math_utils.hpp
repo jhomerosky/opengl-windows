@@ -418,7 +418,7 @@ static inline void set_scale_mat(float out[16], const float scale[3]) {
 //   Rotate is orthogonal -> inverse is equal to the transpose
 //   Scale is diagonal -> inverse is easy; transpose is identical; mult is easy
 //       Model^(-T) = (Rotate*Scale)^(-T) = Rotate^(-T)Scale^(-T) = Rotate * Scale^(-1)
-static inline void set_normal_mat(float out[9], const float rotate[16], const float scale[3]) {
+static inline void set_normal_mat3(float out[9], const float rotate[16], const float scale[3]) {
 	float sxInv = 1/scale[0];
 	float syInv = 1/scale[1];
 	float szInv = 1/scale[2];
@@ -436,19 +436,20 @@ static inline void set_normal_mat(float out[9], const float rotate[16], const fl
 	out[8] = rotate[10]*szInv;
 }
 
-// inverse of normal matrix for GJK intersection
-static inline void set_normal_mat_inverse(float out[9], const float rotate[16], const float scale[3]) {
+// 3x3(Model^T) used in GJK intersection
+// TODO: is the scale multiplied correctly here?
+static inline void set_model_tranpose_mat3(float out[9], const float rotate[16], const float scale[3]) {
 	out[0] = scale[0]*rotate[0];
-	out[1] = scale[0]*rotate[3];
-	out[2] = scale[0]*rotate[6];
+	out[1] = scale[0]*rotate[4];
+	out[2] = scale[0]*rotate[8];
 
 	out[3] = scale[1]*rotate[1];
-	out[4] = scale[1]*rotate[4];
-	out[5] = scale[1]*rotate[7];
+	out[4] = scale[1]*rotate[5];
+	out[5] = scale[1]*rotate[9];
 
 	out[6] = scale[2]*rotate[2];
-	out[7] = scale[2]*rotate[5];
-	out[8] = scale[2]*rotate[8];
+	out[7] = scale[2]*rotate[6];
+	out[8] = scale[2]*rotate[10];
 }
 
 // this removes the translation component of a 4x4 mat; similar to glm::mat4(glm::mat3(my_matrix))

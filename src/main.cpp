@@ -324,8 +324,8 @@ int compute_vnormal_flat(Mesh* mesh) {
 // output: mesh representing the convex hull
 // quickhull algorithm
 Mesh* makeConvexHull(Mesh* mesh) {
-	const float __CONVEX_HULL_EPS__     = 1e-6f;
-	const int   __CONVEX_HULL_INV_EPS__ = 1e6;
+	const float __CONVEX_HULL_DEDUP_EPS__     = 1e-1f;
+	const int   __CONVEX_HULL_DEDUP_INV_EPS__ = 1e1;
 	// smaller vertex for algorithm
 	struct Point {
 		float pos[3];
@@ -427,13 +427,13 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		if (set == nullptr) { fprintf(stderr, "Failed to malloc hash set in makeConvexHull\n"); free(pointList); return nullptr; }
 		for (int i = 0; i < mesh->num_vertices; i++) {
 			Vertex* v = &(mesh->vertices[i]);
-			unsigned int hash = float3Hash(v->pos, __CONVEX_HULL_INV_EPS__);
+			unsigned int hash = float3Hash(v->pos, __CONVEX_HULL_DEDUP_INV_EPS__);
 
 			// check if vertex is in set
 			VertexHashSetNode** ptr = &set[hash % set_size];
 			bool found = false;
 			while (*ptr != NULL) {
-				if (equals3f((*ptr)->vertex->pos, v->pos, __CONVEX_HULL_EPS__)) {
+				if (equals3f((*ptr)->vertex->pos, v->pos, __CONVEX_HULL_DEDUP_EPS__)) {
 					found = true;
 					break;
 				}
@@ -833,14 +833,14 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 	set_scale_mat(scale_temp, objectA->scale);
 	mat4_mul(modelA, rotate_temp, scale_temp);
 	mat4_mul(modelA, translate_temp, modelA);
-	set_normal_mat_inverse(transformA, rotate_temp, objectA->scale);
+	set_model_tranpose_mat3(transformA, rotate_temp, objectA->scale);
 	
 	set_translate_mat(translate_temp, objectB->pos);
 	set_rotation_mat(rotate_temp, objectB->rotation);
 	set_scale_mat(scale_temp, objectB->scale);
 	mat4_mul(modelB, rotate_temp, scale_temp);
 	mat4_mul(modelB, translate_temp, modelB);
-	set_normal_mat_inverse(transformB, rotate_temp, objectB->scale);
+	set_model_tranpose_mat3(transformB, rotate_temp, objectB->scale);
 
 	struct Simplex { 
 		float points[4][3]; 
@@ -883,8 +883,6 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 	// dir = -pA
 	negate3f(dir, simplex.points[0]);
 
-	printf("initial:\npoint=%.3f, %.3f, %.3f; dir=%.3f, %.3f, %.3f\n",point[0], point[1], point[2], dir[0], dir[1], dir[2]);
-
 	const int __MAX_ITER__ = 30;
 	int iter = 0;
 	while (iter < __MAX_ITER__) {
@@ -897,7 +895,6 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 		sub3f(point, supA, supB);
 
 		if (dot3f(point, dir) < 0.0f) {
-			printf("  >> GJK_intersect: returning false at iter=%d\n",iter);
 			return false; // no intersection
 		}
 
@@ -984,17 +981,14 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 					set3fv(dir, normalACD);
 				} else {
 					// intersection found
-					printf("  [GJK_intersect]: collison detected on iter=%d\n", iter);
 					return true;
 				}
 				break;
 			default:
 				printf("Error: default in switch(simplex.length) in GJK_intersect on iteration %d with simplex.length=%u\n", iter, simplex.length);
 		}
-		printf("point=%.3f, %.3f, %.3f; dir=%.3f, %.3f, %.3f\n",point[0], point[1], point[2], dir[0], dir[1], dir[2]);
 		iter++;
 	}
-	printf("max_iter reached in GJK_intersect\n");
 	return false; // max iter reached with no intersection found
 }
 // ===== END GEOMETRY FUNCTIONS =====
@@ -1383,16 +1377,22 @@ void updateScene(GLFWwindow* window, float deltaTime) {
 	}
 
 	// update velocity vector
-	for (int i = 0; i < global_scene.meshInstanceCount; i++) {
-		active_instance = global_scene.meshInstances[i];
-		if (active_instance->physics & 1) {
-			active_instance->velocity[1] -= G_ACCEL*deltaTime;
-		}
-		if (active_instance->physics & 2) {
-			// handle collision logic here
+	// for (int i = 0; i < global_scene.meshInstanceCount; i++) {
+	// 	active_instance = global_scene.meshInstances[i];
+	// 	if (active_instance->physics & 1) {
+	// 		active_instance->velocity[1] -= G_ACCEL*deltaTime;
+	// 	}
+	// 	if (active_instance->physics & 2) {
+	// 		// handle collision logic here
 			
-		}
-	}
+	// 	}
+	// }
+
+	active_instance = global_scene.meshInstances[0];
+	active_instance->pos[0] += deltaTime;
+
+	// handles collision detection
+	executeGJKIntersect();
 }
 
 void renderScene(GLFWwindow* window) {
@@ -1456,7 +1456,7 @@ void renderScene(GLFWwindow* window) {
 		set_translate_mat(translate_temp, meshInstance->pos);
 		set_rotation_mat(rotate_temp, meshInstance->rotation);
 		set_scale_mat(scale_temp, meshInstance->scale);
-		set_normal_mat(global_scene.normal, rotate_temp, meshInstance->scale);
+		set_normal_mat3(global_scene.normal, rotate_temp, meshInstance->scale);
 		mat4_mul(global_scene.model, rotate_temp, scale_temp);
 		mat4_mul(global_scene.model, translate_temp, global_scene.model);
 		
@@ -1503,7 +1503,7 @@ void renderScene(GLFWwindow* window) {
 			set_translate_mat(translate_temp, meshInstance->pos);
 			set_rotation_mat(rotate_temp, meshInstance->rotation);
 			set_scale_mat(scale_temp, meshInstance->scale);
-			set_normal_mat(global_scene.normal, rotate_temp, meshInstance->scale);
+			set_normal_mat3(global_scene.normal, rotate_temp, meshInstance->scale);
 			mat4_mul(global_scene.model, rotate_temp, scale_temp);
 			mat4_mul(global_scene.model, translate_temp, global_scene.model);
 			
@@ -1566,7 +1566,7 @@ void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
 // load initial scene (malloc mesh instances)
 void setDefaultScene() {
 	// row 1 of each mesh
-	const float spacing = 5;
+	const float spacing = 10;
 	for (int i = 0; i < global_resource_pool.meshCount; i++) {
 		MeshInstance* meshInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
 		setDefaultMeshInstance(meshInstance, i);
@@ -1622,7 +1622,7 @@ void initOpenGL() {
 	glEnable(GL_DEPTH_TEST);  
 
 
-	glfwSwapInterval(1); // 0: disable vsync | 1: enable vsync
+	glfwSwapInterval(0); // 0: disable vsync | 1: enable vsync
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // wireframe mode
 }
 
@@ -1854,9 +1854,9 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		,"resources/mesh/box.obj"
 		,"resources/mesh/teapot2.obj"
 		,"resources/mesh/guy.obj"
-		//,"resources/large_files/HP_Portrait.obj"
+		,"resources/large_files/HP_Portrait.obj"
 		//,"resources/large_files/kayle.obj"
-		//,"resources/extra_mesh/elf.obj"
+		,"resources/extra_mesh/elf.obj"
 	};
 	const int vnormal_style = 1; // { 0 = flat | 1 = smooth }
 	// this caused a bug because I'm trying to operate on elements of this array as if they were malloc'd individually
@@ -1939,20 +1939,15 @@ void executeConvexHulls() {
 
 // Orchestrate GJK intersection algorithm
 void executeGJKIntersect() {
-	printf("executeGJKIntersect():\n");
 	if (global_scene.meshInstanceCount < 2) return;
 	for (size_t i = 0; i < global_scene.meshInstanceCount; i++) {
 		set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.5f, 0.0f);
 	}
 	for (size_t i = 0; i < global_scene.meshInstanceCount; i++) {
 		for (size_t j = i+1; j < global_scene.meshInstanceCount; j++) {
-			printf("  >> testing [%zu, %zu]...\n", i, j);
 			if (GJK_intersect(global_scene.meshInstances[i], global_scene.meshInstances[j])) {
-				printf("COLLISION!\n");
 				set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.0f, 0.0f);
 				set3f(global_scene.meshInstances[j]->hullColor, 1.0f, 0.0f, 0.0f);
-			} else {
-				printf("GOOD!\n");
 			}
 		}
 	}
