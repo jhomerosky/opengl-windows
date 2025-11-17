@@ -21,6 +21,7 @@ static inline float dot3f(const float u[3], const float v[3]);
 static inline float dot4f(const float u[4], const float v[4]);
 static inline float fast_rsqrt(float number);
 static inline void quat_mult(float p[4], float q[4], float res[4]);
+static inline void negate3f(float out[3], float in[3]);
 static inline void negate3f_inplace(float out[3]);
 static inline void add3f(float out[3], const float v1[3], const float v2[3]);
 static inline void sub3f(float out[3], const float v1[3], const float v2[3]);
@@ -28,6 +29,12 @@ static inline void mult3f(float out[3], const float in[3], const float factor);
 static inline void cross3f(float out[3], const float v1[3], const float v2[3]);
 static inline void normalize3f_inplace(float v[3]);
 static inline bool equals3f(const float v1[3], const float v2[3], const float eps);
+static inline void matvec3(float out[3], const float mat[9], const float v[3]);
+static inline void matvec3_inplace(const float mat[9], const float v[3]);
+static inline void matvec4(float out[4], const float mat[16], const float v[4]);
+static inline void matvec4_inplace(const float mat[16], float v[4]);
+static inline void matvec4_3fv(float out[3], float model[16], float in[3]);
+static inline void matvec4_3fv_inplace(float mat[16], float v[3]);
 static inline void mat4_mul(float out[16], const float A[16], const float B[16]);
 static inline void set_perspective_mat(float out[16], const float fovy, const float aspect, const float near, const float far);
 static inline void set_lookat_mat(float out[16], const float eye[3], const float front[3], const float up[3]);
@@ -35,8 +42,13 @@ static inline void set_translate_mat(float out[16], const float pos[3]);
 static inline void set_rotation_mat(float out[16], const float quat[4]);
 static inline void set_scale_mat(float out[16], const float scale[3]);
 static inline void set_normal_mat(float out[9], const float rotate[16], const float scale[3]);
+static inline void set_normal_mat_inverse(float out[9], const float rotate[16], const float scale[3]);
 static inline void remove_translation_mat4(float mat[16]);
 static inline void set_triangle_normal(float out[3], const float A[3], const float B[3], const float C[3]);
+// TODO: implement the inverse, if needed. right now this is only needed in the support function to invert the normal mat, so maybe some special way to inverse
+static inline void inverse_mat3(float out[9], float in[9]);
+static inline void transpose_mat3(float out[9], float in[9]);
+static inline void mat4_to_mat3(float out[9], float in[16]);
 // ===== end header =====
 
 // get a seed for the srand function
@@ -66,7 +78,15 @@ static inline bool equals3f(const float v1[3], const float v2[3], const float ep
 	);
 }
 
+// out = -in; safe for out = -out;
+static inline void negate3f(float out[3], float in[3]) {
+	out[0] = -in[0];
+	out[1] = -in[1];
+	out[2] = -in[2];
+}
+
 // out = -out
+// @TODO: evaluate if we can get rid of this and only use above negate3f which also accepts in place arguments
 static inline void negate3f_inplace(float out[3]) {
 	out[0] = -out[0];
 	out[1] = -out[1];
@@ -115,7 +135,7 @@ static inline void quat_mult(float p[4], float q[4], float res[4]) {
 	// take a quaternion p, take p = (w, v) where w is scalar, v in R3
 	// resw = pw*qw - dot(pv, qv)
 	// resv = pw*qv + qw*pv + cross(pv, qv)
-	res[0] = -(p[1] * q[1] + p[2]*q[2] + p[3]*q[3]);
+	res[0] = -(p[1]*q[1] + p[2]*q[2] + p[3]*q[3]);
 	res[1] = p[2] * q[3] - p[3] * q[2];
     res[2] = p[3] * q[1] - p[1] * q[3];
     res[3] = p[1] * q[2] - p[2] * q[1];
@@ -124,6 +144,25 @@ static inline void quat_mult(float p[4], float q[4], float res[4]) {
 	res[1] += p[0] * q[1] + q[0] * p[1];
 	res[2] += p[0] * q[2] + q[0] * p[2];
 	res[3] += p[0] * q[3] + q[0] * p[3];
+}
+
+// p = pq
+static inline void quat_mult_inplace(float p[4], const float q[4]) {
+	float temp[4];
+	temp[0] = -(p[1]*q[1] + p[2]*q[2] + p[3]*q[3]);
+	temp[1] = p[2] * q[3] - p[3] * q[2];
+    temp[2] = p[3] * q[1] - p[1] * q[3];
+    temp[3] = p[1] * q[2] - p[2] * q[1];
+
+	temp[0] += p[0] * q[0];
+	temp[1] += p[0] * q[1] + q[0] * p[1];
+	temp[2] += p[0] * q[2] + q[0] * p[2];
+	temp[3] += p[0] * q[3] + q[0] * p[3];
+	
+	p[0] = temp[0];
+	p[1] = temp[1];
+	p[2] = temp[2];
+	p[3] = temp[3];
 }
 
 // rotate a quaternion p by q and replace p with the result
@@ -184,6 +223,55 @@ static inline void set3fv(float out[3], const float in[3]) { memcpy(out, in, 3*s
 
 static inline void set4f(float out[4], const float f0, const float f1, const float f2, const float f3) { out[0] = f0; out[1] = f1; out[2] = f2; out[3] = f3; }
 static inline void set4fv(float out[4], const float in[4]) { memcpy(out, in, 4*sizeof(float)); }
+
+// mult out = Mv; NOT safe for v = Mv
+static inline void matvec3(float out[3], const float mat[9], const float v[3]) {
+	out[0] = mat[0] * v[0] + mat[3] * v[1] + mat[6] * v[2];
+	out[1] = mat[1] * v[0] + mat[4] * v[1] + mat[7] * v[2];
+	out[2] = mat[2] * v[0] + mat[5] * v[1] + mat[8] * v[2];
+}
+
+static inline void matvec3_inplace(const float mat[9], float v[3]) {
+	float temp[3];
+	temp[0] = mat[0] * v[0] + mat[3] * v[1] + mat[6] * v[2];
+	temp[1] = mat[1] * v[0] + mat[4] * v[1] + mat[7] * v[2];
+	temp[2] = mat[2] * v[0] + mat[5] * v[1] + mat[8] * v[2];
+	memcpy(v, temp, sizeof(float)*3);
+}
+
+// mult out = Mv; NOT safe for v = Mv
+static inline void matvec4(float out[4], const float mat[16], const float v[4]) {
+	out[0] = mat[0] * v[0] + mat[4] * v[1] + mat[8]  * v[2] + mat[12] * v[3];
+	out[1] = mat[1] * v[0] + mat[5] * v[1] + mat[9]  * v[2] + mat[13] * v[3];
+	out[2] = mat[2] * v[0] + mat[6] * v[1] + mat[10] * v[2] + mat[14] * v[3];
+	out[3] = mat[3] * v[0] + mat[7] * v[1] + mat[11] * v[2] + mat[15] * v[3];
+}
+
+// mult out = Mv; safe for v = Mv
+static inline void matvec4_inplace(const float mat[16], float v[4]) {
+	float temp[4];
+	temp[0] = mat[0] * v[0] + mat[4] * v[1] + mat[8]  * v[2] + mat[12] * v[3];
+	temp[1] = mat[1] * v[0] + mat[5] * v[1] + mat[9]  * v[2] + mat[13] * v[3];
+	temp[2] = mat[2] * v[0] + mat[6] * v[1] + mat[10] * v[2] + mat[14] * v[3];
+	temp[3] = mat[3] * v[0] + mat[7] * v[1] + mat[11] * v[2] + mat[15] * v[3];
+	memcpy(v, temp, sizeof(float)*4);
+}
+
+// out = mat * [v, 1.0]
+static inline void matvec4_3fv(float out[3], float mat[16], float v[3]) {
+	out[0] = mat[0] * v[0] + mat[4] * v[1] + mat[8]  * v[2] + mat[12];
+	out[1] = mat[1] * v[0] + mat[5] * v[1] + mat[9]  * v[2] + mat[13];
+	out[2] = mat[2] * v[0] + mat[6] * v[1] + mat[10] * v[2] + mat[14];
+}
+
+// v = (mat*[v, 1.0])[0:2]
+static inline void matvec4_3fv_inplace(float mat[16], float v[3]) {
+	float temp[3];
+	temp[0] = mat[0] * v[0] + mat[4] * v[1] + mat[8]  * v[2] + mat[12];
+	temp[1] = mat[1] * v[0] + mat[5] * v[1] + mat[9]  * v[2] + mat[13];
+	temp[2] = mat[2] * v[0] + mat[6] * v[1] + mat[10] * v[2] + mat[14];
+	memcpy(v, temp, sizeof(float)*3);
+}
 
 // mat4_mul(out, A, B) --> out = AB (safe for A=AB)
 static inline void mat4_mul(float out[16], const float A[16], const float B[16]) {
@@ -323,7 +411,7 @@ static inline void set_rotation_mat(float out[16], const float quat[4]) {
 
 	out[8]  =        2.0f*(xz + wy);
 	out[9]  =        2.0f*(yz - wx);
-	out[10] = 1.0f - 2.0f*(xx - yy);
+	out[10] = 1.0f - 2.0f*(xx + yy);
 	out[11] = 0.0f;
 
 	out[12] = 0.0f;
@@ -349,7 +437,7 @@ static inline void set_scale_mat(float out[16], const float scale[3]) {
 //   Rotate is orthogonal -> inverse is equal to the transpose
 //   Scale is diagonal -> inverse is easy; transpose is identical; mult is easy
 //       Model^(-T) = (Rotate*Scale)^(-T) = Rotate^(-T)Scale^(-T) = Rotate * Scale^(-1)
-static inline void set_normal_mat(float out[9], const float rotate[16], const float scale[3]) {
+static inline void set_normal_mat3(float out[9], const float rotate[16], const float scale[3]) {
 	float sxInv = 1/scale[0];
 	float syInv = 1/scale[1];
 	float szInv = 1/scale[2];
@@ -365,6 +453,22 @@ static inline void set_normal_mat(float out[9], const float rotate[16], const fl
 	out[6] = rotate[8]*szInv;
 	out[7] = rotate[9]*szInv;
 	out[8] = rotate[10]*szInv;
+}
+
+// 3x3(Model^T) used in GJK intersection
+// TODO: is the scale multiplied correctly here?
+static inline void set_model_tranpose_mat3(float out[9], const float rotate[16], const float scale[3]) {
+	out[0] = scale[0]*rotate[0];
+	out[1] = scale[0]*rotate[4];
+	out[2] = scale[0]*rotate[8];
+
+	out[3] = scale[1]*rotate[1];
+	out[4] = scale[1]*rotate[5];
+	out[5] = scale[1]*rotate[9];
+
+	out[6] = scale[2]*rotate[2];
+	out[7] = scale[2]*rotate[6];
+	out[8] = scale[2]*rotate[10];
 }
 
 // this removes the translation component of a 4x4 mat; similar to glm::mat4(glm::mat3(my_matrix))
@@ -386,6 +490,36 @@ static inline void set_triangle_normal(float out[3], float A[3], float B[3], flo
 	sub3f(seg2, C, B);
 	cross3f(out, seg1, seg2);
 	normalize3f_inplace(out);
+}
+
+// out = in^T; not safe for A = A^T
+static inline void transpose_mat3(float out[9], float in[9]) {
+	out[0] = in[0];
+	out[1] = in[3];
+	out[2] = in[7];
+
+	out[3] = in[1];
+	out[4] = in[4];
+	out[5] = in[6];
+	
+	out[6] = in[5];
+	out[7] = in[2];
+	out[8] = in[8];
+}
+
+// out = 3x3(in)
+static inline void mat4_to_mat3(float out[9], float in[16]) {
+	out[0] = in[0];
+	out[1] = in[1];
+	out[2] = in[2];
+
+	out[3] = in[4];
+	out[4] = in[5];
+	out[5] = in[6];
+	
+	out[6] = in[8];
+	out[7] = in[9];
+	out[8] = in[10];
 }
 
 #define __my_math__
