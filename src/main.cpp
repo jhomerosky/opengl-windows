@@ -7,16 +7,43 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-#include "structs.hpp"
 #include "math_utils.hpp"
-#include "shaders.hpp"
 #include "gl_profile.hpp"
-#include "file_utils.hpp"
 
+// Global Macros
 // TODO: come up with a system to handle physics constants
 #define G_ACCEL 9.8f
+// early design decision to statically allocate
+#define __MAX_MESHES__ 64
+#define __MAX_MODELS__ 65536
+#define __MAX_TEXTURES__ 64
+#define __MAX_SHADERS__ 64
 
 // ===== FORWARD DECLATIONS =====
+// structs
+struct Vertex;
+struct Face;
+struct Mesh;
+struct Texture;
+struct Shader;
+struct Skybox;
+struct MeshInstance;
+struct Camera;
+struct MouseInfo;
+struct LightSource;
+struct Scene;
+struct ResourcePool;
+struct Metrics;
+
+// custom initializers
+// @TODO: sort the initializers here
+
+// custom deallocators
+void free_mesh(Mesh* mesh);
+void free_shader(Shader* shader);
+void free_scene(Scene* scene);
+void free_resource_pool(ResourcePool* pool);
+
 // callbacks
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
@@ -34,9 +61,15 @@ Mesh* makeConvexHull(Mesh* mesh);
 unsigned int support(Mesh* mesg, float dir[3]);
 bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB);
 
+// shader handling
+GLuint compileShader(GLenum type, const char* source);
+GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource);
+
 // load from file
 int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh);
 unsigned int loadCubemap(const char** textureFiles);
+char* mallocTextFromFile(const char* filename);
+GLuint loadShader(char* vertexShaderSource, char* fragmentShaderSource);
 
 // register
 int addMeshInstanceToGlobalScene(MeshInstance* meshInstance);
@@ -79,10 +112,224 @@ void executeGJKIntersect();
 void printGlobalResourcePool();
 // ===== END FORWARD DECLARATIONS ====
 
+// ===== STRUCT DEFINITIONS =====
+#pragma region STRUCTDEF // this allows the region to be collapsible in vscode
+// vertex object is a collection of 3d point in space, 3d normal vector, and 2d texture coord
+// more than just a point in space, it is an object that encodes the corner of a polygon
+struct Vertex {
+	float pos[3];
+	float normal[3];
+	float texture[2];
+};
+
+// face encodes a triangle, which references 3 points in space as corners of the triangle
+// the meaning of the ID is left to the mesh which owns the face
+struct Face {
+	unsigned int vertexId[3];
+};
+
+// Mesh is a resource containing a list of vertices, a list of faces and some metadata
+struct Mesh {
+	Vertex* vertices;
+	Face* faces;
+	size_t num_vertices;
+	size_t num_faces;
+	bool has_normals;
+
+	bool has_convex_hull;
+	int hullId; // -1 if we are a hull, otherwise point into global mesh pool
+
+	char* name; // string name to recognize the hull
+
+	unsigned int VAO;
+	unsigned int VBO;
+	unsigned int EBO;
+};
+
+// Texture is a resource containing metadata
+// in the future it might have more data
+struct Texture {
+	unsigned int textureID;
+};
+
+// Shader wrapper
+struct Shader {
+	unsigned int shaderID;
+
+	// @TODO?: hashmap : string (uniform name) -> int (loc)
+	// not going to be many uniforms, maybe 10-20 max. maybe it's faster to just O(n) lookup.
+	
+	// until (if) we implement hashmap, do a lookup on uniformNames, use index in uniformLoc
+	char** uniformNames;
+	unsigned int* uniformLoc;
+	int uniformCount;
+};
+
+// Skybox is a cubemap loaded from 6 individual texture images
+struct Skybox {
+	unsigned int cubemapID;
+	float vertices[108];
+
+	unsigned int VAO;
+	unsigned int VBO;
+};
+
+
+// MeshInstance is a world model which references a mesh and a texture
+struct MeshInstance {
+	unsigned int globalMeshId;
+	unsigned int globalTextureId;
+	float pos[3];
+	float scale[3];
+	float rotation[4]; // orientation as a quaternion rotation on (1, 0, 0, 0)
+	float color[3];
+
+	// convex hull
+	float hullColor[3];
+
+	// physics
+	float velocity[3];
+	
+	// bitfield
+	// physics = enabled
+	// physics & 1 = is_falling
+	// physics & 2 = is_collidable
+	unsigned int physics;
+};
+
+// Camera encodes the view
+// yaw should be initialized to -90.0f
+struct Camera {
+	float pos[3];
+	float front[3];
+	float up[3];
+
+	float pitch;
+	float yaw;
+	float speed;
+
+	float TOP_MOVE_SPEED;
+	float NORMAL_MOVE_SPEED;
+
+	float PAN_SPEED;
+	float TILT_SPEED;
+};
+
+// MouseInfo stores some state related to the mouse input
+// See initMouseInfo for default vals
+struct MouseInfo {
+	float lastX;
+	float lastY;
+	float sensitivity;
+	bool firstMouse;
+	bool canModeSwitch;
+};
+
+// lightsource is an emitter of light for dynamic lighting
+struct LightSource {
+	float pos[3];
+	float color[3];
+};
+
+// Scene is meant to be a global scope singleton containing world state
+struct Scene {
+	MeshInstance* meshInstances[__MAX_MODELS__];
+	int meshInstanceCount;
+
+	// these are here so we can allocate memory once and reuse it in the render loop
+	// column major order because OpenGL uses it
+	// col major means mat[0:4] is col0, mat[4:8] is col1, mat[8:12] is col2, mat[12:16] is col3
+	float model[16];
+	float view[16];
+	float proj[16];
+	float projview[16]; // precompute for shader
+	float normal[9]; // normal matrix instead of model matrix for normal vectors to keep the transformation linear
+
+	int windowWidth;
+	int windowHeight; 
+
+	Camera camera;
+	LightSource lightSource;
+	Skybox skybox;
+	MouseInfo mouse;
+};
+
+// ResourcePool is meant to be a store of assets with IDs for MeshInstances to reference
+struct ResourcePool {
+	Mesh* meshes[__MAX_MESHES__];
+	int meshCount;
+
+	Texture* textures[__MAX_TEXTURES__];
+	int textureCount;
+
+	Shader* shaders[__MAX_SHADERS__];
+	int shaderCount;
+	
+	// @TODO: add textures here? Or have 2 resourcePools?
+	// ResourcePool globalMeshPool;
+	// ResourcePool globalTexturePool;
+	// VS
+	// ResourcePool { Mesh* meshes[]; Texture* textures[]; }
+
+	// @TODO?: map string name --> resourceID
+	// Why should this pool own a map to its resources?
+	// The index is already an ID for the array. 
+	//ResourceMap meshMap;
+};
+
+// wrapper for handling FPS metrics
+struct Metrics {
+	float lastTime;
+	float currTime;
+	float deltaTime;
+	float fpsWindowTimeStart;
+	float fpsWindowTimeEnd;
+	float heartBeat;
+	unsigned int frameCount;
+	int FRAMES_TO_COUNT;
+	float fps;
+};
+#pragma endregion STRUCTDEF 
+// ===== END STRUCT DEFINITIONS =====
+
 // ===== GLOBAL VARS =====
 ResourcePool global_resource_pool;
 Scene global_scene;
 // ===== END GLOBAL VARS =====
+
+// ===== CUSTOM DEALLOCATORS =====
+// frees the mesh and mesh contents
+void free_mesh(Mesh* mesh) {
+	free(mesh->name);
+	free(mesh->vertices);
+	free(mesh->faces);
+	free(mesh);
+}
+
+void free_shader(Shader* shader) {
+	free(shader->uniformNames);
+	free(shader->uniformLoc);
+	free(shader);
+}
+
+void free_scene(Scene* scene) {
+	for (int i = 0; i < scene->meshInstanceCount; i++) {
+		free(scene->meshInstances[i]);
+	}
+}
+
+void free_resource_pool(ResourcePool* pool) {
+	for (int i = 0; i < pool->meshCount; i++) {
+		free_mesh(pool->meshes[i]);
+	}
+	for (int i = 0; i < pool->textureCount; i++) {
+		free(pool->textures[i]);
+	}
+	for (int i = 0; i < pool->shaderCount; i++) {
+		free_shader(pool->shaders[i]);
+	}
+}
+// ===== END CUSTOM DEALLOCATORS =====
 
 // ===== CALLBACK FUNCTIONS =====
 // function to execute when the window is resized
@@ -993,6 +1240,56 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 }
 // ===== END GEOMETRY FUNCTIONS =====
 
+// ===== SHADER HANDLING =====
+// Compile the shader
+GLuint compileShader(GLenum type, const char* source) {
+    GLuint shader = glCreateShader(type);
+    if (!shader) { fprintf(stderr, "Failed to create shader object\n"); return 0; }
+
+    glShaderSource(shader, 1, &source, NULL);
+    glCompileShader(shader);
+
+    GLint success;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetShaderInfoLog(shader, 512, NULL, infoLog);
+        fprintf(stderr, "Shader Compilation Failed\n%s\n", infoLog);
+        glDeleteShader(shader);
+        return 0;
+    }
+    return shader;
+}
+
+// compile and link vertex and fragment shaders into a full shader program
+GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource) {
+    // compile shaders
+    GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
+    GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
+
+    // link shaders to program
+    GLuint shaderProgram = glCreateProgram();
+    glAttachShader(shaderProgram, vertexShader);
+    glAttachShader(shaderProgram, fragmentShader);
+    glLinkProgram(shaderProgram);
+
+    // validate
+    GLint success;
+    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
+        fprintf(stderr, "Shader Program Linking Failed\n%s\n", infoLog);
+        shaderProgram = 0;
+    }
+
+    // clean up shaders after linking
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    return shaderProgram;
+}
+// ===== END SHADER HANDLING =====
 
 // ===== LOAD FUNCTIONS =====
 // @NOTE: assuming vertex_normal[i] goes to vertex[i] for all i
@@ -1183,6 +1480,47 @@ unsigned int loadCubemap(const char** textureFiles) {
 	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
 	return textureID;
+}
+
+// reads text file onto a new string
+char* mallocTextFromFile(const char* filename) {
+    FILE* file = fopen(filename, "r");
+    if (!file) { fprintf(stderr, "Failed to open text file: %s\n", filename); return NULL; }
+
+    // Seek to end to get file size
+    fseek(file, 0, SEEK_END);
+    long length = ftell(file);
+    rewind(file);
+
+    // Allocate buffer (+1 for null terminator)
+    char* text = (char*)malloc(sizeof(char) * (length + 1));
+    if (!text) { fclose(file); fprintf(stderr, "Memory allocation failed in mallocTextFromFile\n"); return NULL; }
+
+    // Read file into buffer
+    size_t read_size = fread(text, 1, length, file);
+    text[read_size] = '\0';
+
+    fclose(file);
+    return text;
+}
+
+// input filenames for vertex shader and fragment shader sources
+// output shader reference
+GLuint loadShader(const char* vertexShaderSourceFilename, const char* fragmentShaderSourceFilename) {
+	const char* vertexShaderSource = mallocTextFromFile(vertexShaderSourceFilename);
+	const char* fragmentShaderSource = mallocTextFromFile(fragmentShaderSourceFilename);
+    GLuint shaderProgram = 0;
+
+    if (vertexShaderSource && fragmentShaderSource) {
+        shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
+    } else {
+        fprintf(stderr, "Shader source is null in loadShader\n");
+    }
+
+	free((void*)vertexShaderSource);
+	free((void*)fragmentShaderSource);
+
+	return shaderProgram;
 }
 // ===== END LOAD FUNCTIONS =====
 
