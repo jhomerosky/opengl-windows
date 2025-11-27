@@ -106,7 +106,7 @@ void initGlobalScene();
 
 // algorithm handlers
 void executeConvexHulls();
-void executeGJKIntersect();
+void executeCollisionCheck();
 
 // print
 void printGlobalResourcePool();
@@ -1154,10 +1154,10 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 	    //     return true
 		switch(simplex.length) {
 			case 1:
-				// 1 point; set new direction only
+				// 1 point; set new direction only; this logically should never be entered
 				negate3f(dir, simplex.points[Aindex]);
 				break;
-			case 2:
+			case 2: // @TODO: if we fail this check, would we have returned in the `no intersection` check anyways?
 				// 2 points; if B->A points in the direction of the origin
 				// Yes: simplex = {A};   dir = -A
 				// No:  simplex = {A,B}; dir = (AB x AO) x AB
@@ -1705,7 +1705,7 @@ void updateTime(Metrics* metrics) {
 // physics for now
 void updateScene(GLFWwindow* window, float deltaTime) {
 	// handles collision detection
-	executeGJKIntersect();
+	executeCollisionCheck();
 
 	// update position based on velocity vector
 	MeshInstance* active_instance;
@@ -2276,17 +2276,17 @@ void executeConvexHulls() {
 			printf("  ERROR: makeConvexHull(meshes[%d]) returned nullptr\n", i);
 		}
 	}
-	printf("executeConvexHulls completed\n");
 }
 
 // Orchestrate GJK intersection algorithm
-void executeGJKIntersect() {
+void executeCollisionCheck() {
 	if (global_scene.meshInstanceCount < 2) return;
 	for (size_t i = 0; i < global_scene.meshInstanceCount; i++) {
 		set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.5f, 0.0f);
 	}
 	for (size_t i = 0; i < global_scene.meshInstanceCount; i++) {
 		for (size_t j = i+1; j < global_scene.meshInstanceCount; j++) {
+			// TODO: radius check to rule out pairs before trying GJK intersect
 			if (GJK_intersect(global_scene.meshInstances[i], global_scene.meshInstances[j])) {
 				set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.0f, 0.0f);
 				set3f(global_scene.meshInstances[j]->hullColor, 1.0f, 0.0f, 0.0f);
@@ -2343,10 +2343,9 @@ int main(int argc, char** argv) {
 
 	// ================ Playground to test 3D algorithms before render loop ===================
 	executeConvexHulls();
-	printGlobalResourcePool();
-	executeGJKIntersect();
-	// ================ end playground ================
 
+	printf("Begin render loop\n");
+	// ================ end playground ================
 
 
 	Metrics metrics;
