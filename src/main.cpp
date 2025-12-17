@@ -660,9 +660,9 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	size_t pointListSize = 0;
 	
 	// ===== DEDUPLICATION PASS =====
-	// TODO: benchmark map vs O(n^2) dedup
+	// benchmark demonstrated significant speedup using map over O(n^2).
+	// For guy.obj (24461 v): 17ms vs 700ms; for hp_portrait.obj (819352 v): 500ms vs force killed after 1 minute  
 	{
-		const int BUCKET_SIZE = 8; // prealloc bucket size for collisions
 		struct VertexHashSetNode {
 			Vertex* vertex;
 			VertexHashSetNode* next;
@@ -708,6 +708,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		free(set);
 		pointList = (Point*)realloc(pointList, pointListSize * sizeof(Point));
 	}
+
 	// printf("(CONVEX HULL): vertices deduplicated: %d --> %d \n", mesh->num_vertices, pointListSize);
 	// ===== END DEDUP PASS =====
 
