@@ -11,7 +11,7 @@
 #include "gl_profile.hpp"
 
 // Global Macros
-// TODO: come up with a system to handle physics constants
+// @TODO: come up with a system to handle physics constants
 #define G_ACCEL 9.8f
 // early design decision to statically allocate
 #define __MAX_MESHES__ 64
@@ -713,7 +713,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// ===== END DEDUP PASS =====
 
 	// ===== BEGIN QUICKHULL =====
-	// TODO: benchmark quickhull vs the rest of makeConvexHull
+	// @TODO: benchmark quickhull vs the rest of makeConvexHull
 	// list of facets used in convex hull, size may exceed cap and trigger realloc
 	size_t facetListSize = 0;
 	size_t facetListCap = maxi(4, mesh->num_faces);
@@ -909,7 +909,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		}
 
 		// reassign exterior points to new facets
-		// TODO: benchmark this loop
+		// @TODO: benchmark this loop
 		for (size_t j = 0; j < facetListSize; j++) {
 			if (facetList[j].isActive && facetList[j].isVisible) {
 				// redistribute points
@@ -1448,6 +1448,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 }
 
 // assume textureFiles is an array of 6 filenames
+// @TODO: add custom .tga loader to remove stbi dependency.
 unsigned int loadCubemap(const char** textureFiles) {
 	unsigned int textureID;
 	glGenTextures(1, &textureID);
@@ -2287,7 +2288,7 @@ void executeCollisionCheck() {
 	}
 	for (size_t i = 0; i < global_scene.meshInstanceCount; i++) {
 		for (size_t j = i+1; j < global_scene.meshInstanceCount; j++) {
-			// TODO: radius check to rule out pairs before trying GJK intersect
+			// @TODO: radius check to rule out pairs before trying GJK intersect
 			if (GJK_intersect(global_scene.meshInstances[i], global_scene.meshInstances[j])) {
 				set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.0f, 0.0f);
 				set3f(global_scene.meshInstances[j]->hullColor, 1.0f, 0.0f, 0.0f);
