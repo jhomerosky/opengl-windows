@@ -11,7 +11,7 @@
 #include "gl_profile.hpp"
 
 // Global Macros
-// TODO: come up with a system to handle physics constants
+// @TODO: come up with a system to handle physics constants
 #define G_ACCEL 9.8f
 // early design decision to statically allocate
 #define __MAX_MESHES__ 64
@@ -406,9 +406,9 @@ int compute_vnormal_smooth(Mesh* mesh) {
 		float e2[3];
 		float res[3];
 		// vertices
-		Vertex *v0 = &(mesh->vertices[mesh->faces[i].vertexId[0]]);
-		Vertex *v1 = &(mesh->vertices[mesh->faces[i].vertexId[1]]);
-		Vertex *v2 = &(mesh->vertices[mesh->faces[i].vertexId[2]]);
+		Vertex *const v0 = &(mesh->vertices[mesh->faces[i].vertexId[0]]);
+		Vertex *const v1 = &(mesh->vertices[mesh->faces[i].vertexId[1]]);
+		Vertex *const v2 = &(mesh->vertices[mesh->faces[i].vertexId[2]]);
 		
 		// edges of triangle
 		sub3f(e1, v1->pos, v0->pos);
@@ -713,7 +713,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// ===== END DEDUP PASS =====
 
 	// ===== BEGIN QUICKHULL =====
-	// TODO: benchmark quickhull vs the rest of makeConvexHull
+	// @TODO: benchmark quickhull vs the rest of makeConvexHull
 	// list of facets used in convex hull, size may exceed cap and trigger realloc
 	size_t facetListSize = 0;
 	size_t facetListCap = maxi(4, mesh->num_faces);
@@ -909,7 +909,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		}
 
 		// reassign exterior points to new facets
-		// TODO: benchmark this loop
+		// @TODO: benchmark this loop
 		for (size_t j = 0; j < facetListSize; j++) {
 			if (facetList[j].isActive && facetList[j].isVisible) {
 				// redistribute points
@@ -1739,6 +1739,11 @@ void updateScene(GLFWwindow* window, float deltaTime) {
 }
 
 void renderScene(GLFWwindow* window) {
+	// @TODO: move the hardcoded values out somewhere
+	const float fovy = radiansf(60.0f);
+	const float near = 0.1f;
+	const float far = 500.0f;
+
 	// Clear the screen buffer
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -1763,10 +1768,6 @@ void renderScene(GLFWwindow* window) {
 	unsigned int skyboxProjViewLoc = glGetUniformLocation(skyboxShader, "projview");
 
 	// precompute matrix: projview = proj*view
-	// @TODO: move the hardcoded values out somewhere
-	const float fovy = radiansf(60.0f);
-	const float near = 0.1f;
-	const float far = 500.0f;
 	glfwGetFramebufferSize(window, &global_scene.windowWidth, &global_scene.windowHeight);
 	set_perspective_mat(global_scene.proj, fovy, (float)global_scene.windowWidth / (float)global_scene.windowHeight, near, far);
 	set_lookat_mat(global_scene.view, global_scene.camera.pos, global_scene.camera.front, global_scene.camera.up);
@@ -1864,11 +1865,10 @@ void renderScene(GLFWwindow* window) {
 		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 	}
 
-
 	// draw skybox last
 	glDepthFunc(GL_LEQUAL);
 
-	// skybox needs to follow us around
+	// not translating the skybox in view space has the effect of making the skybox follow the camera around
 	remove_translation_mat4(global_scene.view);
 
 	// precompute projview

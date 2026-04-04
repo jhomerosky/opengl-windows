@@ -1,5 +1,5 @@
 # About
-The purpose of this project is to teach myself computer graphics with OpenGL using as few external libraries as possible. I am interested in writing from scratch and, although I am writing this in C++, I am intentionally staying close to C style code.
+The purpose of this project is to teach myself computer graphics with OpenGL using as few external libraries as possible. I am interested in writing from scratch and, although I am writing this in C++, I am intentionally staying close to C style code. I am interested in exploring the performance benefits gained by not strictly following OOP.
 
 # Building
 I am developing the project on Windows using VSCode so I have included my tasks.json file for building the project using g++. The project uses GLFW for window management and input handling, and GLAD for loading OpenGL functions.
