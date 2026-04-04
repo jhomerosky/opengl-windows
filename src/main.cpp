@@ -1448,6 +1448,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 }
 
 // assume textureFiles is an array of 6 filenames
+// @TODO: add custom .tga loader to remove stbi dependency.
 unsigned int loadCubemap(const char** textureFiles) {
 	unsigned int textureID;
 	glGenTextures(1, &textureID);
@@ -2287,7 +2288,7 @@ void executeCollisionCheck() {
 	}
 	for (size_t i = 0; i < global_scene.meshInstanceCount; i++) {
 		for (size_t j = i+1; j < global_scene.meshInstanceCount; j++) {
-			// TODO: radius check to rule out pairs before trying GJK intersect
+			// @TODO: radius check to rule out pairs before trying GJK intersect
 			if (GJK_intersect(global_scene.meshInstances[i], global_scene.meshInstances[j])) {
 				set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.0f, 0.0f);
 				set3f(global_scene.meshInstances[j]->hullColor, 1.0f, 0.0f, 0.0f);
