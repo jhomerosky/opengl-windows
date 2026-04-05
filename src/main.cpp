@@ -1293,9 +1293,121 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
 // ===== END SHADER HANDLING =====
 
 // ===== LOAD FUNCTIONS =====
+
+int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
+	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
+
+	// size of mesh fields
+	size_t num_vertices = 1024;
+	size_t num_uv_coords = 0;
+	size_t num_vnormals = 0;
+	size_t num_faces = 1024;
+	// index for writing to mesh fields
+	size_t v_index = 0;
+	size_t vt_index = 0;
+	size_t vn_index = 0;
+	size_t f_index = 0;
+
+	float pos[3];
+	unsigned int v[4], t[4], n[4];
+
+	// counts items in file
+	char buf[512];
+	FILE* file = fopen(filename, "r");
+	if (file == NULL) { 
+		printf("FILE %s is NULL in malloc_mesh_fields_from_obj_file\n", filename);
+		return 0;
+	}
+
+	mesh->vertices = (Vertex*)malloc(sizeof(Vertex)*num_vertices);
+	mesh->faces = (Face*)malloc(sizeof(Face)*num_faces);
+
+	bool errorCond = false;
+
+	int line_number = 0;
+	while (fgets(buf, sizeof(buf), file) != NULL) {
+		line_number++;
+		char* p = &buf[2];
+		if (buf[0] == 'v' && buf[1] == ' ') {
+			if (v_index + 1 >= num_vertices) { 
+				num_vertices *= 2;
+				mesh->vertices = (Vertex*)realloc(mesh->vertices, num_vertices);
+			}
+			pos[0] = strtof(p, &p);
+			pos[1] = strtof(p, &p);
+			pos[2] = strtof(p, &p);
+			printf("vp=%.5f %.5f %.5f\n", pos[0], pos[1], pos[2]);
+			set3fv(mesh->vertices[v_index].pos, pos);
+			v_index++;
+		}
+		if (buf[0] == 'v' && buf[1] == 't') {
+			num_uv_coords++;
+			// parse uv coords
+			pos[0] = strtof(p, &p);
+			pos[1] = strtof(p, &p);
+			printf("vt=%.5f %.5f\n", pos[0], pos[1]);
+			mesh->vertices[vt_index].texture[0] = pos[0];
+			mesh->vertices[vt_index].texture[1] = pos[1];
+			vt_index++;
+		}
+		if (buf[0] == 'v' && buf[1] == 'n') {
+			num_vnormals++;
+			pos[0] = strtof(p, &p);
+			pos[1] = strtof(p, &p);
+			pos[2] = strtof(p, &p);
+			printf("vn=%.5f %.5f %.5f\n", pos[0], pos[1], pos[2]);
+			set3fv(mesh->vertices[vn_index].normal, pos);
+			vn_index++;
+		}
+		if (buf[0] == 'f' && buf[1] == ' ') {
+			bool is_quad = false;
+			f_index++; // need to increase again if this is a quad
+			if (f_index >= num_faces) {
+				num_faces *= 2;
+				mesh->faces = (Face*)realloc(mesh->faces, num_faces);
+			}
+			// parse faces
+			for (int i = 0; i < 3; i++) {
+				v[i] = strtol(p, &p, 10);
+				p++;
+				if (*p != '/') {
+					t[i] = strtol(p, &p, 10);
+				}
+				p++;
+				n[i] = strtol(p, &p, 10);
+			}
+			if (*p != '\0') {
+				is_quad = true;
+				v[3] = strtol(p, &p, 10);
+				p++;
+				if (*p != '/') {
+					t[3] = strtol(p, &p, 10);
+				}
+				p++;
+				n[3] = strtol(p, &p, 10);
+			}
+		}
+	}
+	fclose(file);
+
+	if (errorCond) {
+		printf("errorCond in malloc_mesh_fields_from_obj_file_new\n");
+		free(mesh->vertices);
+		free(mesh->faces);
+		return 0;
+	}
+
+	mesh->vertices = (Vertex*)realloc(mesh->vertices, v_index);
+	mesh->faces = (Face*)realloc(mesh->faces, f_index);
+	mesh->num_vertices = v_index;
+	mesh->num_faces = f_index;
+	mesh->has_normals = (vn_index > 0); 
+	return 1;
+}
+
 // @NOTE: assuming vertex_normal[i] goes to vertex[i] for all i
 // @TODO: speed this up. taking 2 seconds to read 125mb text file. speedup may require better non-text file format.
-int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
+int malloc_mesh_fields_from_obj_file_old(const char* filename, Mesh* mesh) {
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
 	// size of mesh fields
 	size_t num_vertices = 0;
@@ -1354,7 +1466,9 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	mesh->faces = (Face*)malloc(sizeof(Face)*num_faces);
 	
 	// load items onto memory
+	int line_number = 0;
 	while (fgets(buf, sizeof(buf), file) != NULL) {
+		line_number++;
 		if (buf[0] == 'v' && buf[1] == ' ') {
 			if (sscanf(buf, "v %f %f %f", &pos[0], &pos[1], &pos[2]) == 3) {
 				set3fv(mesh->vertices[v_index].pos, pos);
@@ -1374,7 +1488,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 				++vn_index;
 			}
 		}
-		if (buf[0] == 'f') {
+		if (buf[0] == 'f' && buf[1] == ' ') {
 			int res;
 			bool is_quad = false;
 			bool is_good = false;
@@ -1412,7 +1526,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 					++f_index;
 				}
 			} else {
-				printf("is_good=false in malloc_mesh_fields_from_obj_file\n");
+				printf("[LINE=%d] is_good=false in malloc_mesh_fields_from_obj_file\n", line_number);
 				printf("sscanf_include_normals=%d | is_quad=%d | res=%d\n", sscanf_include_normals, is_quad, res);
 			}
 		}
@@ -1447,8 +1561,12 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	return 1;
 }
 
+int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
+	// return malloc_mesh_fields_from_obj_file_new(filename, mesh);
+	return malloc_mesh_fields_from_obj_file_old(filename, mesh);
+}
+
 // assume textureFiles is an array of 6 filenames
-// @TODO: add custom .tga loader to remove stbi dependency.
 unsigned int loadCubemap(const char** textureFiles) {
 	unsigned int textureID;
 	glGenTextures(1, &textureID);
@@ -2196,8 +2314,9 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	const char *list_of_meshes[] = {
 		"resources/mesh/teapot.obj"
 		,"resources/mesh/box.obj"
-		,"resources/mesh/teapot2.obj"
-		,"resources/mesh/guy.obj"
+		//,"resources/mesh/teapot2.obj"
+		//,"resources/mesh/guy.obj"
+		//,"resources/mesh/LibertStatue.obj"
 		//,"resources/large_files/HP_Portrait.obj"
 		//,"resources/large_files/kayle.obj"
 		//,"resources/extra_mesh/elf.obj"
