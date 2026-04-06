@@ -1294,13 +1294,18 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
 
 // ===== LOAD FUNCTIONS =====
 
+
+// @TODO: during load time, think about we are structuring the data for runtime.
+//        each vertex is reusable, but the true uniqueness is (v, vt, vn). 
+//        could use a map for memory efficiency or flatten to 3*num_faces for cache locality.
+//        3*num_faces is probably much better, but I'm interested in seeing the tradeoffs at runtime
 int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
 
 	// size of mesh fields
 	size_t num_vertices = 1024;
-	size_t num_uv_coords = 0;
-	size_t num_vnormals = 0;
+	size_t num_uv_coords = 1024;
+	size_t num_vnormals = 1024;
 	size_t num_faces = 1024;
 	// index for writing to mesh fields
 	size_t v_index = 0;
@@ -1311,6 +1316,19 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 	float pos[3];
 	unsigned int v[4], t[4], n[4];
 
+	// @TODO: these seem common enough to lift out of this function
+	struct Vec3f {
+		float x;
+		float y;
+		float z;
+	};
+
+	struct Vec2f {
+		float u;
+		float v;
+	};
+
+
 	// counts items in file
 	char buf[512];
 	FILE* file = fopen(filename, "r");
@@ -1319,89 +1337,145 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 		return 0;
 	}
 
-	mesh->vertices = (Vertex*)malloc(sizeof(Vertex)*num_vertices);
-	mesh->faces = (Face*)malloc(sizeof(Face)*num_faces);
+	// @TODO: make it all buffered during load time and load onto mesh later?
+	mesh->vertices = (Vertex*)malloc(num_vertices*sizeof(Vertex));
+	mesh->faces = (Face*)malloc(num_faces*sizeof(Face));
+	Vec3f* vnormals = (Vec3f*)malloc(num_vnormals*sizeof(Vec3f));
+	Vec2f* uvcoords = (Vec2f*)malloc(num_uv_coords*sizeof(Vec2f));
 
 	bool errorCond = false;
 
 	int line_number = 0;
 	while (fgets(buf, sizeof(buf), file) != NULL) {
 		line_number++;
-		char* p = &buf[2];
+		char* p;
+		// parse vertices
 		if (buf[0] == 'v' && buf[1] == ' ') {
+			p = &buf[2];
 			if (v_index + 1 >= num_vertices) { 
 				num_vertices *= 2;
-				mesh->vertices = (Vertex*)realloc(mesh->vertices, num_vertices);
+				mesh->vertices = (Vertex*)realloc(mesh->vertices, num_vertices*sizeof(Vertex));
+				if (mesh->vertices == nullptr) { printf("PANIC! REALLOC FAILED FOR mesh->vertices IN MALLOC_MESH_FIELDS_FROM_OBJ_FILE_NEW\n"); }
 			}
 			pos[0] = strtof(p, &p);
 			pos[1] = strtof(p, &p);
 			pos[2] = strtof(p, &p);
-			printf("vp=%.5f %.5f %.5f\n", pos[0], pos[1], pos[2]);
 			set3fv(mesh->vertices[v_index].pos, pos);
 			v_index++;
 		}
+		// parse uv texture coords
 		if (buf[0] == 'v' && buf[1] == 't') {
-			num_uv_coords++;
-			// parse uv coords
-			pos[0] = strtof(p, &p);
-			pos[1] = strtof(p, &p);
-			printf("vt=%.5f %.5f\n", pos[0], pos[1]);
-			mesh->vertices[vt_index].texture[0] = pos[0];
-			mesh->vertices[vt_index].texture[1] = pos[1];
+			p = &buf[3];
+			if (vt_index + 1 >= num_uv_coords) {
+				num_uv_coords *= 2;
+				uvcoords = (Vec2f*)realloc(uvcoords, num_uv_coords*sizeof(Vec2f));
+				if (uvcoords == nullptr) { printf("PANIC! REALLOC FAILED FOR uvcoords IN MALLOC_MESH_FIELDS_FROM_OBJ_FILE_NEW\n"); }
+			}
+			uvcoords[vt_index].u = strtof(p, &p);
+			uvcoords[vt_index].v = strtof(p, &p);
 			vt_index++;
 		}
+		// parse vertex normals
 		if (buf[0] == 'v' && buf[1] == 'n') {
-			num_vnormals++;
-			pos[0] = strtof(p, &p);
-			pos[1] = strtof(p, &p);
-			pos[2] = strtof(p, &p);
-			printf("vn=%.5f %.5f %.5f\n", pos[0], pos[1], pos[2]);
-			set3fv(mesh->vertices[vn_index].normal, pos);
+			p = &buf[3];
+			if (vn_index + 1 >= num_vnormals) {
+				num_vnormals *= 2;
+				vnormals = (Vec3f*)realloc(vnormals, num_vnormals*sizeof(Vec3f));
+				if (vnormals == nullptr) { printf("PANIC! REALLOC FAILED FOR vnormals IN MALLOC_MESH_FIELDS_FROM_OBJ_FILE_NEW\n"); }
+			}
+			vnormals[vn_index].x = strtof(p, &p);
+			vnormals[vn_index].y = strtof(p, &p);
+			vnormals[vn_index].z = strtof(p, &p);
 			vn_index++;
 		}
+		// parse faces
 		if (buf[0] == 'f' && buf[1] == ' ') {
-			bool is_quad = false;
-			f_index++; // need to increase again if this is a quad
-			if (f_index >= num_faces) {
+			p = &buf[2];
+			if (f_index + 2 >= num_faces) {
 				num_faces *= 2;
-				mesh->faces = (Face*)realloc(mesh->faces, num_faces);
+				mesh->faces = (Face*)realloc(mesh->faces, sizeof(Face)*num_faces);
+				if (mesh->faces == nullptr) { printf("PANIC! REALLOC FAILED FOR mesh->faces IN MALLOC_MESH_FIELDS_FROM_OBJ_FILE_NEW\n"); }
 			}
+			
 			// parse faces
 			for (int i = 0; i < 3; i++) {
-				v[i] = strtol(p, &p, 10);
-				p++;
-				if (*p != '/') {
-					t[i] = strtol(p, &p, 10);
+				v[i] = strtoul(p, &p, 10);
+				if (*p == '/') {
+					p++;
+					if (*p != '/') {
+						t[i] = strtoul(p, &p, 10);
+					} else {
+						t[i] = 0;
+					}
+					if (*p == '/') {
+						p++;
+						n[i] = strtoul(p, &p, 10);
+					} else {
+						n[i] = 0;
+					}
 				}
-				p++;
-				n[i] = strtol(p, &p, 10);
 			}
-			if (*p != '\0') {
-				is_quad = true;
-				v[3] = strtol(p, &p, 10);
-				p++;
-				if (*p != '/') {
-					t[3] = strtol(p, &p, 10);
+			mesh->faces[f_index].vertexId[0] = v[0] - 1;
+			mesh->faces[f_index].vertexId[1] = v[1] - 1;
+			mesh->faces[f_index].vertexId[2] = v[2] - 1;
+
+			// face[this]: v0: [vindex, vtindex, vnindex], v1: [vindex, vtindex, vnindex], v2: [vindex, vtindex, vnindex]
+			//             v0: [v[0], vt[0], vn[0]],       v1: [v[1], vt[1], vn[1]],       v2: [v[2], vt[2], vn[2]]
+			// assign vertex0
+			// @TODO: actually, let's think about whether we even bother keeping this or untangle into a flattened 3*num_faces list
+
+			f_index++;
+			while (*p == ' ') { p++; }
+			if (*p != '\0' && *p != '\n') {
+				v[3] = strtoul(p, &p, 10);
+				if (*p == '/') {
+					p++;
+					if (*p != '/') {
+						t[3] = strtoul(p, &p, 10);
+					} else {
+						t[3] = 0;
+					}
+					if (*p == '/') {
+						p++;
+						n[3] = strtoul(p, &p, 10);
+					} else {
+						n[3] = 0;
+					}
 				}
-				p++;
-				n[3] = strtol(p, &p, 10);
+				mesh->faces[f_index].vertexId[0] = v[2] - 1;
+				mesh->faces[f_index].vertexId[1] = v[3] - 1;
+				mesh->faces[f_index].vertexId[2] = v[0] - 1;
+				
+				// face[this]: v2: [vindex, vtindex, vnindex], v3: [vindex, vtindex, vnindex], v0: [vindex, vtindex, vnindex]
+				//             v2: [v[2], vt[2], vn[2]],       v3: [v[3], vt[3], vn[3]],       v0: [v[0], vt[0], vn[0]]
+				// @TODO: actually, let's think about whether we even bother keeping this or untangle into a flattened 3*num_faces list
+
+				f_index++;
 			}
 		}
 	}
+	printf("about to close file\n");
 	fclose(file);
 
 	if (errorCond) {
 		printf("errorCond in malloc_mesh_fields_from_obj_file_new\n");
 		free(mesh->vertices);
 		free(mesh->faces);
+		free(uvcoords);
+		free(vnormals);
 		return 0;
 	}
 
-	mesh->vertices = (Vertex*)realloc(mesh->vertices, v_index);
-	mesh->faces = (Face*)realloc(mesh->faces, f_index);
+	printf("no error cond\n");
+	mesh->vertices = (Vertex*)realloc(mesh->vertices, v_index*sizeof(Vertex));
+	mesh->faces = (Face*)realloc(mesh->faces, f_index*sizeof(Face));
 	mesh->num_vertices = v_index;
 	mesh->num_faces = f_index;
-	mesh->has_normals = (vn_index > 0); 
+	mesh->has_normals = (vn_index > 0);
+
+	free(uvcoords);
+	free(vnormals);
+
 	return 1;
 }
 
@@ -1562,7 +1636,7 @@ int malloc_mesh_fields_from_obj_file_old(const char* filename, Mesh* mesh) {
 }
 
 int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
-	// return malloc_mesh_fields_from_obj_file_new(filename, mesh);
+	//return malloc_mesh_fields_from_obj_file_new(filename, mesh);
 	return malloc_mesh_fields_from_obj_file_old(filename, mesh);
 }
 
@@ -2314,8 +2388,8 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	const char *list_of_meshes[] = {
 		"resources/mesh/teapot.obj"
 		,"resources/mesh/box.obj"
-		//,"resources/mesh/teapot2.obj"
-		//,"resources/mesh/guy.obj"
+		,"resources/mesh/teapot2.obj"
+		,"resources/mesh/guy.obj"
 		//,"resources/mesh/LibertStatue.obj"
 		//,"resources/large_files/HP_Portrait.obj"
 		//,"resources/large_files/kayle.obj"
