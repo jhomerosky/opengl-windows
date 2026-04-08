@@ -1,30 +1,42 @@
 @echo off
-REM Calls g++.exe directly from MinGW
-REM @TODO: For Windows we should probably use MSVC.
-REM I started out a bit frustrated with build patterns for C and C++ on Windows, but I need to get over it.
+REM MSVC build for Windows with debugging info
 
 setlocal enabledelayedexpansion
 
-set CC=g++.exe
-set CXXFLAGS=-g -O0 -fno-omit-frame-pointer -std=c++17 -fopenmp
-set INCLUDES=-I.\include
-set LIBS=-L.\lib -lglfw3dll
-set SOURCES=.\src\main.cpp .\src\glad.c
-set OUTPUT=.\run.exe
+REM Compiler and flags
+set CC=cl.exe
+set CFLAGS=/Zi /Od /std:c++17 /openmp /DGLFW_STATIC /nologo
+set INCLUDES=/I include /I include/glad
+set LIBPATHS=/LIBPATH:lib
+set LIBS=glfw3_mt.lib opengl32.lib gdi32.lib user32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib legacy_stdio_definitions.lib
+set SOURCES=src\main.cpp src\glad.c
+set OUTPUT=run.exe
 
+REM Clean command
 if "%1"=="clean" (
     echo Cleaning...
     if exist %OUTPUT% del %OUTPUT%
+    if exist *.pdb del *.pdb
+    if exist *.obj del *.obj
+    if exist *.ilk del *.ilk
     echo Done.
     exit /b 0
 )
 
+REM Build
 echo Building...
-"%CC%" %CXXFLAGS% %INCLUDES% %SOURCES% %LIBS% -o %OUTPUT%
+%CC% %CFLAGS% %INCLUDES% %SOURCES% /link %LIBPATHS% %LIBS% /OUT:%OUTPUT%
 
 if !errorlevel! equ 0 (
+    REM Remove intermediate files after successful build
+    if exist *.obj del *.obj
+    if exist *.ilk del *.ilk
     echo Build successful: %OUTPUT%
 ) else (
     echo Build failed with error code !errorlevel!
     exit /b !errorlevel!
+)
+
+if "%1"=="run" (
+    run.exe
 )
