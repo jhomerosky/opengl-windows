@@ -1301,7 +1301,7 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
 //        3*num_faces is probably much better, but I'm interested in seeing the tradeoffs at runtime
 int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
-
+	
 	// size of mesh fields
 	size_t num_vertices = 1024;
 	size_t num_uv_coords = 1024;
