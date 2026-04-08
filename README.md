@@ -1,7 +1,11 @@
 # About
-The purpose of this project is to teach myself computer graphics with OpenGL using as few external libraries as possible. I am interested in writing from scratch and, although I am writing this in C++, I am intentionally staying close to C style code. I am interested in exploring the performance benefits gained by not strictly following OOP.
+The purpose of this project is to teach myself computer graphics with OpenGL from first principles using as few external libraries as possible. This project is mostly written in C but compiled as C++ so that I can leverage a few C++ features. I am not using any of the C++ STL. This project is not a demonstration of "clean code" programming principles like OOP or RAII. I am interested in both exploring the performance benefits gained by not strictly following them and also discovering why they exist in the first place.
 
-The project uses GLFW for window management and input handling, and GLAD for loading OpenGL functions. I use stb_image.h for image loading for now.
+Here are a list of the external dependencies:
+GLAD - Load OpenGL functions
+GLFW - Create window and handle input
+khrplatform.h - Required by OpenGL/GLAD
+stb_image.h - Load a variety of image formats
 
 # Build
 
