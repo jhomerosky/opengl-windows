@@ -6,7 +6,7 @@ REM I started out a bit frustrated with build patterns for C and C++ on Windows,
 setlocal enabledelayedexpansion
 
 set CC=g++.exe
-set CXXFLAGS=-g -std=c++17 -fopenmp
+set CXXFLAGS=-g -O0 -fno-omit-frame-pointer -std=c++17 -fopenmp
 set INCLUDES=-I.\include
 set LIBS=-L.\lib -lglfw3dll
 set SOURCES=.\src\main.cpp .\src\glad.c

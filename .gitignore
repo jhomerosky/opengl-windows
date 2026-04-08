@@ -1,6 +1,11 @@
 # Build artifacts
 .vscode/
 *.exe
+*.pdb
+*.rdi
+*.obj
+.vs/
+CppProperties.json
 
 # Custom folders
 resources/large_files/
