@@ -1303,18 +1303,18 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
 	
 	// size of mesh fields
-	size_t num_vertices = 1024;
+	size_t num_vertices  = 1024;
 	size_t num_uv_coords = 1024;
-	size_t num_vnormals = 1024;
-	size_t num_faces = 1024;
+	size_t num_vnormals  = 1024;
+	size_t num_faces     = 1024;
 	// index for writing to mesh fields
-	size_t v_index = 0;
+	size_t v_index  = 0;
 	size_t vt_index = 0;
 	size_t vn_index = 0;
-	size_t f_index = 0;
+	size_t f_index  = 0;
 
 	float pos[3];
-	unsigned int v[4], t[4], n[4];
+	int v[4], t[4], n[4];
 
 	// @TODO: these seem common enough to lift out of this function
 	struct Vec3f {
@@ -1328,6 +1328,11 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 		float v;
 	};
 
+	struct FaceRef {
+		int v[3];
+		int vt[3];
+		int vn[3];
+	};
 
 	// counts items in file
 	char buf[512];
@@ -1338,29 +1343,29 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 	}
 
 	// @TODO: make it all buffered during load time and load onto mesh later?
-	mesh->vertices = (Vertex*)malloc(num_vertices*sizeof(Vertex));
-	mesh->faces = (Face*)malloc(num_faces*sizeof(Face));
-	Vec3f* vnormals = (Vec3f*)malloc(num_vnormals*sizeof(Vec3f));
-	Vec2f* uvcoords = (Vec2f*)malloc(num_uv_coords*sizeof(Vec2f));
+	// mesh->vertices = (Vertex*)malloc(num_vertices*sizeof(Vertex));
+	// mesh->faces = (Face*)malloc(num_faces*sizeof(Face));
+	Vec3f* obj_vertices  = (Vec3f*)malloc(num_vertices*sizeof(Vec3f));
+	Vec3f* obj_vnormals  = (Vec3f*)malloc(num_vnormals*sizeof(Vec3f));
+	Vec2f* obj_uvcoords  = (Vec2f*)malloc(num_uv_coords*sizeof(Vec2f));
+	FaceRef* obj_faces = (FaceRef*)malloc(num_faces*sizeof(FaceRef));
 
 	bool errorCond = false;
-
 	int line_number = 0;
+	char* p = nullptr;
 	while (fgets(buf, sizeof(buf), file) != NULL) {
 		line_number++;
-		char* p;
 		// parse vertices
 		if (buf[0] == 'v' && buf[1] == ' ') {
 			p = &buf[2];
-			if (v_index + 1 >= num_vertices) { 
+			if (v_index + 1 >= num_vertices) {
 				num_vertices *= 2;
-				mesh->vertices = (Vertex*)realloc(mesh->vertices, num_vertices*sizeof(Vertex));
-				if (mesh->vertices == nullptr) { printf("PANIC! REALLOC FAILED FOR mesh->vertices IN MALLOC_MESH_FIELDS_FROM_OBJ_FILE_NEW\n"); }
+				obj_vertices = (Vec3f*)realloc(obj_vertices, num_vertices*sizeof(Vec3f));
+				if (obj_vertices == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_vertices IN malloc_mesh_fields_from_obj_file_new\n"); }
 			}
-			pos[0] = strtof(p, &p);
-			pos[1] = strtof(p, &p);
-			pos[2] = strtof(p, &p);
-			set3fv(mesh->vertices[v_index].pos, pos);
+			obj_vertices[v_index].x = strtof(p, &p);
+			obj_vertices[v_index].y = strtof(p, &p);
+			obj_vertices[v_index].z = strtof(p, &p);
 			v_index++;
 		}
 		// parse uv texture coords
@@ -1368,11 +1373,11 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 			p = &buf[3];
 			if (vt_index + 1 >= num_uv_coords) {
 				num_uv_coords *= 2;
-				uvcoords = (Vec2f*)realloc(uvcoords, num_uv_coords*sizeof(Vec2f));
-				if (uvcoords == nullptr) { printf("PANIC! REALLOC FAILED FOR uvcoords IN MALLOC_MESH_FIELDS_FROM_OBJ_FILE_NEW\n"); }
+				obj_uvcoords = (Vec2f*)realloc(obj_uvcoords, num_uv_coords*sizeof(Vec2f));
+				if (obj_uvcoords == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_uvcoords IN malloc_mesh_fields_from_obj_file_new\n"); }
 			}
-			uvcoords[vt_index].u = strtof(p, &p);
-			uvcoords[vt_index].v = strtof(p, &p);
+			obj_uvcoords[vt_index].u = strtof(p, &p);
+			obj_uvcoords[vt_index].v = strtof(p, &p);
 			vt_index++;
 		}
 		// parse vertex normals
@@ -1380,12 +1385,12 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 			p = &buf[3];
 			if (vn_index + 1 >= num_vnormals) {
 				num_vnormals *= 2;
-				vnormals = (Vec3f*)realloc(vnormals, num_vnormals*sizeof(Vec3f));
-				if (vnormals == nullptr) { printf("PANIC! REALLOC FAILED FOR vnormals IN MALLOC_MESH_FIELDS_FROM_OBJ_FILE_NEW\n"); }
+				obj_vnormals = (Vec3f*)realloc(obj_vnormals, num_vnormals*sizeof(Vec3f));
+				if (obj_vnormals == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_vnormals IN malloc_mesh_fields_from_obj_file_new\n"); }
 			}
-			vnormals[vn_index].x = strtof(p, &p);
-			vnormals[vn_index].y = strtof(p, &p);
-			vnormals[vn_index].z = strtof(p, &p);
+			obj_vnormals[vn_index].x = strtof(p, &p);
+			obj_vnormals[vn_index].y = strtof(p, &p);
+			obj_vnormals[vn_index].z = strtof(p, &p);
 			vn_index++;
 		}
 		// parse faces
@@ -1393,8 +1398,8 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 			p = &buf[2];
 			if (f_index + 2 >= num_faces) {
 				num_faces *= 2;
-				mesh->faces = (Face*)realloc(mesh->faces, sizeof(Face)*num_faces);
-				if (mesh->faces == nullptr) { printf("PANIC! REALLOC FAILED FOR mesh->faces IN MALLOC_MESH_FIELDS_FROM_OBJ_FILE_NEW\n"); }
+				obj_faces = (FaceRef*)realloc(obj_faces, num_faces*sizeof(FaceRef));
+				if (obj_faces == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_faces IN malloc_mesh_fields_from_obj_file_new\n"); }
 			}
 			
 			// parse faces
@@ -1415,16 +1420,20 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 					}
 				}
 			}
-			mesh->faces[f_index].vertexId[0] = v[0] - 1;
-			mesh->faces[f_index].vertexId[1] = v[1] - 1;
-			mesh->faces[f_index].vertexId[2] = v[2] - 1;
+			obj_faces[f_index].v[0] = v[0] - 1;
+			obj_faces[f_index].v[1] = v[1] - 1;
+			obj_faces[f_index].v[2] = v[2] - 1;
 
-			// face[this]: v0: [vindex, vtindex, vnindex], v1: [vindex, vtindex, vnindex], v2: [vindex, vtindex, vnindex]
-			//             v0: [v[0], vt[0], vn[0]],       v1: [v[1], vt[1], vn[1]],       v2: [v[2], vt[2], vn[2]]
-			// assign vertex0
-			// @TODO: actually, let's think about whether we even bother keeping this or untangle into a flattened 3*num_faces list
+			obj_faces[f_index].vt[0] = t[0] - 1;
+			obj_faces[f_index].vt[1] = t[1] - 1;
+			obj_faces[f_index].vt[2] = t[2] - 1;
 
+			obj_faces[f_index].vn[0] = n[0] - 1;
+			obj_faces[f_index].vn[1] = n[1] - 1;
+			obj_faces[f_index].vn[2] = n[2] - 1;
 			f_index++;
+
+			// read a fourth vertex if present
 			while (*p == ' ') { p++; }
 			if (*p != '\0' && *p != '\n') {
 				v[3] = strtoul(p, &p, 10);
@@ -1442,39 +1451,52 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 						n[3] = 0;
 					}
 				}
-				mesh->faces[f_index].vertexId[0] = v[2] - 1;
-				mesh->faces[f_index].vertexId[1] = v[3] - 1;
-				mesh->faces[f_index].vertexId[2] = v[0] - 1;
-				
-				// face[this]: v2: [vindex, vtindex, vnindex], v3: [vindex, vtindex, vnindex], v0: [vindex, vtindex, vnindex]
-				//             v2: [v[2], vt[2], vn[2]],       v3: [v[3], vt[3], vn[3]],       v0: [v[0], vt[0], vn[0]]
-				// @TODO: actually, let's think about whether we even bother keeping this or untangle into a flattened 3*num_faces list
 
+				// if obj face is a quad [0, 1, 2, 3],
+				//   then split into two triangles: [0, 1, 2], and [2, 3, 0]
+				obj_faces[f_index].v[0] = v[2] - 1;
+				obj_faces[f_index].v[1] = v[3] - 1;
+				obj_faces[f_index].v[2] = v[0] - 1;
+
+				obj_faces[f_index].vt[0] = t[2] - 1;
+				obj_faces[f_index].vt[1] = t[3] - 1;
+				obj_faces[f_index].vt[2] = t[0] - 1;
+
+				obj_faces[f_index].vn[0] = n[2] - 1;
+				obj_faces[f_index].vn[1] = n[3] - 1;
+				obj_faces[f_index].vn[2] = n[0] - 1;
 				f_index++;
 			}
 		}
 	}
-	printf("about to close file\n");
 	fclose(file);
 
 	if (errorCond) {
+		// double check this free is correct
 		printf("errorCond in malloc_mesh_fields_from_obj_file_new\n");
-		free(mesh->vertices);
-		free(mesh->faces);
-		free(uvcoords);
-		free(vnormals);
+		free(obj_vertices);
+		free(obj_vnormals);
+		free(obj_uvcoords);
+		free(obj_faces);
 		return 0;
 	}
 
+	// @TODO: build the final mesh based on the loaded data
 	printf("no error cond\n");
-	mesh->vertices = (Vertex*)realloc(mesh->vertices, v_index*sizeof(Vertex));
-	mesh->faces = (Face*)realloc(mesh->faces, f_index*sizeof(Face));
+	mesh->vertices = (Vertex*)malloc(3*f_index*sizeof(Vertex)); // this might not be the right size
+	mesh->faces = (Face*)malloc(f_index*sizeof(Face));
+
+	// todo
+
 	mesh->num_vertices = v_index;
 	mesh->num_faces = f_index;
 	mesh->has_normals = (vn_index > 0);
 
-	free(uvcoords);
-	free(vnormals);
+	// double check this free is correct
+	free(obj_vertices);
+	free(obj_vnormals);
+	free(obj_uvcoords);
+	free(obj_faces);
 
 	return 1;
 }
