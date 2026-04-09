@@ -1,4 +1,14 @@
+# Build artifacts
 .vscode/
-old/
 *.exe
+*.pdb
+*.rdi
+*.obj
+.vs/
+CppProperties.json
+
+# Custom folders
 resources/large_files/
+resources/extra_mesh/
+artifacts/
+demos/
