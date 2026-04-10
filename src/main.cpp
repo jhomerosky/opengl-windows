@@ -51,6 +51,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 // hashes
 static inline unsigned long long float3Hash(const float in[3], const int decimalFilter);
 static inline uint64_t hash_pair(const uint32_t a, const uint32_t b);
+static inline unsigned long long hash_triplet(int a, int b, int c);
 
 // geometry
 int compute_vnormal_smooth(Mesh* mesh);
@@ -393,6 +394,12 @@ static inline unsigned long long float3Hash(const float in[3], const int decimal
 // hash pair of uint32_t into one uint64_t
 static inline uint64_t hash_pair(const uint32_t a, const uint32_t b) {
 	return ((uint64_t)a << 32) | (uint64_t)b;
+}
+
+// TODO: research a better hash function
+static inline unsigned long long hash_triplet(unsigned int a, unsigned int b, unsigned int c) {
+	const unsigned long long primes[3] = {19349669u, 83492791u, 73856093u};
+	return (primes[0] * a) ^ (primes[1] * b) ^ (primes[2] * c);
 }
 // ===== END HASH FUNCTIONS =====
 
@@ -1345,10 +1352,10 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 	// @TODO: make it all buffered during load time and load onto mesh later?
 	// mesh->vertices = (Vertex*)malloc(num_vertices*sizeof(Vertex));
 	// mesh->faces = (Face*)malloc(num_faces*sizeof(Face));
-	Vec3f* obj_vertices  = (Vec3f*)malloc(num_vertices*sizeof(Vec3f));
-	Vec3f* obj_vnormals  = (Vec3f*)malloc(num_vnormals*sizeof(Vec3f));
-	Vec2f* obj_uvcoords  = (Vec2f*)malloc(num_uv_coords*sizeof(Vec2f));
-	FaceRef* obj_faces = (FaceRef*)malloc(num_faces*sizeof(FaceRef));
+	Vec3f* obj_vertices = (Vec3f*)malloc(num_vertices*sizeof(Vec3f));
+	Vec3f* obj_vnormals = (Vec3f*)malloc(num_vnormals*sizeof(Vec3f));
+	Vec2f* obj_uvcoords = (Vec2f*)malloc(num_uv_coords*sizeof(Vec2f));
+	FaceRef* obj_faces  = (FaceRef*)malloc(num_faces*sizeof(FaceRef));
 
 	bool errorCond = false;
 	int line_number = 0;
@@ -1483,10 +1490,12 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 
 	// @TODO: build the final mesh based on the loaded data
 	printf("no error cond\n");
-	mesh->vertices = (Vertex*)malloc(3*f_index*sizeof(Vertex)); // this might not be the right size
-	mesh->faces = (Face*)malloc(f_index*sizeof(Face));
+	mesh->vertices = (Vertex*)malloc(3*f_index*sizeof(Vertex)); // this is the max value, we can shrink later
+	mesh->faces = (Face*)malloc(f_index*sizeof(Face)); // this is the exact value
 
-	// todo
+	// for each faceRef, hashmap each (vpos, vt, vn) --> index into mesh->vertices
+	// then assign face[i] indices to the result
+	// shrink mesh->vertices after
 
 	mesh->num_vertices = v_index;
 	mesh->num_faces = f_index;
@@ -1658,8 +1667,8 @@ int malloc_mesh_fields_from_obj_file_old(const char* filename, Mesh* mesh) {
 }
 
 int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
-	//return malloc_mesh_fields_from_obj_file_new(filename, mesh);
-	return malloc_mesh_fields_from_obj_file_old(filename, mesh);
+	return malloc_mesh_fields_from_obj_file_new(filename, mesh);
+	//return malloc_mesh_fields_from_obj_file_old(filename, mesh);
 }
 
 // assume textureFiles is an array of 6 filenames

@@ -3,7 +3,6 @@ REM MSVC build for Windows with debugging info
 
 setlocal enabledelayedexpansion
 
-REM Compiler and flags
 set CC=cl.exe
 set CFLAGS=/Zi /Od /std:c++17 /openmp /DGLFW_STATIC /nologo
 set INCLUDES=/I include /I include/glad
@@ -12,7 +11,6 @@ set LIBS=glfw3_mt.lib opengl32.lib gdi32.lib user32.lib shell32.lib ole32.lib ol
 set SOURCES=src\main.cpp src\glad.c
 set OUTPUT=run.exe
 
-REM Clean command
 if "%1"=="clean" (
     echo Cleaning...
     if exist %OUTPUT% del %OUTPUT%
@@ -23,12 +21,10 @@ if "%1"=="clean" (
     exit /b 0
 )
 
-REM Build
 echo Building...
 %CC% %CFLAGS% %INCLUDES% %SOURCES% /link %LIBPATHS% %LIBS% /OUT:%OUTPUT%
 
 if !errorlevel! equ 0 (
-    REM Remove intermediate files after successful build
     if exist *.obj del *.obj
     if exist *.ilk del *.ilk
     echo Build successful: %OUTPUT%
