@@ -22,7 +22,7 @@ if "%1"=="clean" (
 )
 
 echo Building...
-%CC% %CFLAGS% %INCLUDES% %SOURCES% /link %LIBPATHS% %LIBS% /OUT:%OUTPUT%
+%CC% %CFLAGS% %INCLUDES% %SOURCES% /link %LIBPATHS% %LIBS% /OUT:%OUTPUT% /DEBUG:FULL /INCREMENTAL:NO /PDB:run.pdb
 
 if !errorlevel! equ 0 (
     if exist *.obj del *.obj

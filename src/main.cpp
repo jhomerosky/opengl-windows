@@ -51,7 +51,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 // hashes
 static inline unsigned long long float3Hash(const float in[3], const int decimalFilter);
 static inline uint64_t hash_pair(const uint32_t a, const uint32_t b);
-static inline unsigned long long hash_triplet(int a, int b, int c);
+static inline unsigned long long hash_triplet(unsigned int a, unsigned int b, unsigned int c);
 
 // geometry
 int compute_vnormal_smooth(Mesh* mesh);
@@ -135,7 +135,9 @@ struct Mesh {
 	Face* faces;
 	size_t num_vertices;
 	size_t num_faces;
-	bool has_normals;
+
+	bool has_vertex_normals;
+	bool has_texture_coords;
 
 	bool has_convex_hull;
 	int hullId; // -1 if we are a hull, otherwise point into global mesh pool
@@ -396,10 +398,11 @@ static inline uint64_t hash_pair(const uint32_t a, const uint32_t b) {
 	return ((uint64_t)a << 32) | (uint64_t)b;
 }
 
-// TODO: research a better hash function
+// hash three integers
 static inline unsigned long long hash_triplet(unsigned int a, unsigned int b, unsigned int c) {
-	const unsigned long long primes[3] = {19349669u, 83492791u, 73856093u};
-	return (primes[0] * a) ^ (primes[1] * b) ^ (primes[2] * c);
+	return a * 19349669u
+		 ^ b * 83492791u
+		 ^ c * 73856093u;
 }
 // ===== END HASH FUNCTIONS =====
 
@@ -436,7 +439,7 @@ int compute_vnormal_smooth(Mesh* mesh) {
 	for (int i = 0; i < mesh->num_vertices; i++) {
 		normalize3f_inplace(mesh->vertices[i].normal);
 	}
-	mesh->has_normals = true;
+	mesh->has_vertex_normals = true;
 	return 0;
 }
 
@@ -569,7 +572,7 @@ int compute_vnormal_flat(Mesh* mesh) {
 		set3fv(v1->normal, res);
 		set3fv(v2->normal, res);
 	}
-	mesh->has_normals = true;
+	mesh->has_vertex_normals = true;
 
 	return 0;
 }
@@ -1034,11 +1037,11 @@ Mesh* makeConvexHull(Mesh* mesh) {
 
 	for (int i = 0; i < ridgeMapSize; i++) {
 		RidgeMapNode* ptr = ridgeMap[i];
-		RidgeMapNode* temp;
+		RidgeMapNode* next;
 		while (ptr != NULL) {
-			temp = ptr->next;
+			next = ptr->next;
 			free(ptr);
-			ptr = temp;
+			ptr = next;
 		}
 	}
 	free(ridgeMap);
@@ -1302,28 +1305,28 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
 // ===== LOAD FUNCTIONS =====
 
 
-// @TODO: during load time, think about we are structuring the data for runtime.
-//        each vertex is reusable, but the true uniqueness is (v, vt, vn). 
-//        could use a map for memory efficiency or flatten to 3*num_faces for cache locality.
-//        3*num_faces is probably much better, but I'm interested in seeing the tradeoffs at runtime
+// @NOTE: during load time, think about we are structuring the data for runtime.
+//        each vertex is reusable, but the true uniqueness is (v, vt, vn).
 int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
 	
-	// size of mesh fields
-	size_t num_vertices  = 1024;
-	size_t num_uv_coords = 1024;
-	size_t num_vnormals  = 1024;
-	size_t num_faces     = 1024;
-	// index for writing to mesh fields
-	size_t v_index  = 0;
-	size_t vt_index = 0;
-	size_t vn_index = 0;
-	size_t f_index  = 0;
+	// container size
+	size_t obj_vertices_capacity = 1024;
+	size_t obj_uvcoords_capacity = 1024;
+	size_t obj_vnormals_capacity = 1024;
+	size_t obj_faces_capacity    = 1024;
 
+	// number of elements
+	size_t obj_vertices_size = 0;
+	size_t obj_uvcoords_size = 0;
+	size_t obj_vnormals_size = 0;
+	size_t obj_faces_size    = 0;
+
+	// temps
 	float pos[3];
 	int v[4], t[4], n[4];
 
-	// @TODO: these seem common enough to lift out of this function
+	// internal struct defs
 	struct Vec3f {
 		float x;
 		float y;
@@ -1341,6 +1344,16 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 		int vn[3];
 	};
 
+	struct VertexMapNode {
+		struct {
+			int A;
+			int B;
+			int C;
+		} key;   // triplet (vpos_index, vt_index, vn_index)
+		int val; // index into mesh->vertices list
+		VertexMapNode* next;
+	};
+
 	// counts items in file
 	char buf[512];
 	FILE* file = fopen(filename, "r");
@@ -1349,134 +1362,131 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 		return 0;
 	}
 
-	// @TODO: make it all buffered during load time and load onto mesh later?
-	// mesh->vertices = (Vertex*)malloc(num_vertices*sizeof(Vertex));
-	// mesh->faces = (Face*)malloc(num_faces*sizeof(Face));
-	Vec3f* obj_vertices = (Vec3f*)malloc(num_vertices*sizeof(Vec3f));
-	Vec3f* obj_vnormals = (Vec3f*)malloc(num_vnormals*sizeof(Vec3f));
-	Vec2f* obj_uvcoords = (Vec2f*)malloc(num_uv_coords*sizeof(Vec2f));
-	FaceRef* obj_faces  = (FaceRef*)malloc(num_faces*sizeof(FaceRef));
+	// temp storage for file data
+	Vec3f* obj_vertices = (Vec3f*)malloc(obj_vertices_capacity * sizeof(Vec3f));
+	Vec2f* obj_uvcoords = (Vec2f*)malloc(obj_uvcoords_capacity * sizeof(Vec2f));
+	Vec3f* obj_vnormals = (Vec3f*)malloc(obj_vnormals_capacity * sizeof(Vec3f));
+	FaceRef* obj_faces  = (FaceRef*)malloc(obj_faces_capacity * sizeof(FaceRef));
 
 	bool errorCond = false;
 	int line_number = 0;
 	char* p = nullptr;
+	gl_timer read_timer = get_gl_timer();
 	while (fgets(buf, sizeof(buf), file) != NULL) {
 		line_number++;
 		// parse vertices
 		if (buf[0] == 'v' && buf[1] == ' ') {
 			p = &buf[2];
-			if (v_index + 1 >= num_vertices) {
-				num_vertices *= 2;
-				obj_vertices = (Vec3f*)realloc(obj_vertices, num_vertices*sizeof(Vec3f));
+			if (obj_vertices_size + 1 >= obj_vertices_capacity) {
+				obj_vertices_capacity *= 2;
+				obj_vertices = (Vec3f*)realloc(obj_vertices, obj_vertices_capacity * sizeof(Vec3f));
 				if (obj_vertices == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_vertices IN malloc_mesh_fields_from_obj_file_new\n"); }
 			}
-			obj_vertices[v_index].x = strtof(p, &p);
-			obj_vertices[v_index].y = strtof(p, &p);
-			obj_vertices[v_index].z = strtof(p, &p);
-			v_index++;
+			obj_vertices[obj_vertices_size].x = strtof(p, &p);
+			obj_vertices[obj_vertices_size].y = strtof(p, &p);
+			obj_vertices[obj_vertices_size].z = strtof(p, &p);
+			obj_vertices_size++;
 		}
 		// parse uv texture coords
 		if (buf[0] == 'v' && buf[1] == 't') {
 			p = &buf[3];
-			if (vt_index + 1 >= num_uv_coords) {
-				num_uv_coords *= 2;
-				obj_uvcoords = (Vec2f*)realloc(obj_uvcoords, num_uv_coords*sizeof(Vec2f));
+			if (obj_uvcoords_size + 1 >= obj_uvcoords_capacity) {
+				obj_uvcoords_capacity *= 2;
+				obj_uvcoords = (Vec2f*)realloc(obj_uvcoords, obj_uvcoords_capacity * sizeof(Vec2f));
 				if (obj_uvcoords == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_uvcoords IN malloc_mesh_fields_from_obj_file_new\n"); }
 			}
-			obj_uvcoords[vt_index].u = strtof(p, &p);
-			obj_uvcoords[vt_index].v = strtof(p, &p);
-			vt_index++;
+			obj_uvcoords[obj_uvcoords_size].u = strtof(p, &p);
+			obj_uvcoords[obj_uvcoords_size].v = strtof(p, &p);
+			obj_uvcoords_size++;
 		}
 		// parse vertex normals
 		if (buf[0] == 'v' && buf[1] == 'n') {
 			p = &buf[3];
-			if (vn_index + 1 >= num_vnormals) {
-				num_vnormals *= 2;
-				obj_vnormals = (Vec3f*)realloc(obj_vnormals, num_vnormals*sizeof(Vec3f));
+			if (obj_vnormals_size + 1 >= obj_vnormals_capacity) {
+				obj_vnormals_capacity *= 2;
+				obj_vnormals = (Vec3f*)realloc(obj_vnormals, obj_vnormals_capacity * sizeof(Vec3f));
 				if (obj_vnormals == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_vnormals IN malloc_mesh_fields_from_obj_file_new\n"); }
 			}
-			obj_vnormals[vn_index].x = strtof(p, &p);
-			obj_vnormals[vn_index].y = strtof(p, &p);
-			obj_vnormals[vn_index].z = strtof(p, &p);
-			vn_index++;
+			obj_vnormals[obj_vnormals_size].x = strtof(p, &p);
+			obj_vnormals[obj_vnormals_size].y = strtof(p, &p);
+			obj_vnormals[obj_vnormals_size].z = strtof(p, &p);
+			obj_vnormals_size++;
 		}
 		// parse faces
 		if (buf[0] == 'f' && buf[1] == ' ') {
 			p = &buf[2];
-			if (f_index + 2 >= num_faces) {
-				num_faces *= 2;
-				obj_faces = (FaceRef*)realloc(obj_faces, num_faces*sizeof(FaceRef));
+			// +2 is required here because a quad adds 2 faces
+			if (obj_faces_size + 2 >= obj_faces_capacity) {
+				obj_faces_capacity *= 2;
+				obj_faces = (FaceRef*)realloc(obj_faces, obj_faces_capacity * sizeof(FaceRef));
 				if (obj_faces == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_faces IN malloc_mesh_fields_from_obj_file_new\n"); }
 			}
 			
 			// parse faces
 			for (int i = 0; i < 3; i++) {
 				v[i] = strtoul(p, &p, 10);
+				t[i] = 0;
+				n[i] = 0;
 				if (*p == '/') {
 					p++;
 					if (*p != '/') {
 						t[i] = strtoul(p, &p, 10);
-					} else {
-						t[i] = 0;
 					}
 					if (*p == '/') {
 						p++;
 						n[i] = strtoul(p, &p, 10);
-					} else {
-						n[i] = 0;
 					}
 				}
 			}
-			obj_faces[f_index].v[0] = v[0] - 1;
-			obj_faces[f_index].v[1] = v[1] - 1;
-			obj_faces[f_index].v[2] = v[2] - 1;
+			obj_faces[obj_faces_size].v[0] = v[0] - 1;
+			obj_faces[obj_faces_size].v[1] = v[1] - 1;
+			obj_faces[obj_faces_size].v[2] = v[2] - 1;
 
-			obj_faces[f_index].vt[0] = t[0] - 1;
-			obj_faces[f_index].vt[1] = t[1] - 1;
-			obj_faces[f_index].vt[2] = t[2] - 1;
+			obj_faces[obj_faces_size].vt[0] = t[0] - 1;
+			obj_faces[obj_faces_size].vt[1] = t[1] - 1;
+			obj_faces[obj_faces_size].vt[2] = t[2] - 1;
 
-			obj_faces[f_index].vn[0] = n[0] - 1;
-			obj_faces[f_index].vn[1] = n[1] - 1;
-			obj_faces[f_index].vn[2] = n[2] - 1;
-			f_index++;
+			obj_faces[obj_faces_size].vn[0] = n[0] - 1;
+			obj_faces[obj_faces_size].vn[1] = n[1] - 1;
+			obj_faces[obj_faces_size].vn[2] = n[2] - 1;
+			obj_faces_size++;
 
 			// read a fourth vertex if present
 			while (*p == ' ') { p++; }
 			if (*p != '\0' && *p != '\n') {
 				v[3] = strtoul(p, &p, 10);
+				t[3] = 0;
+				n[3] = 0;
 				if (*p == '/') {
 					p++;
 					if (*p != '/') {
 						t[3] = strtoul(p, &p, 10);
-					} else {
-						t[3] = 0;
 					}
 					if (*p == '/') {
 						p++;
 						n[3] = strtoul(p, &p, 10);
-					} else {
-						n[3] = 0;
 					}
 				}
 
-				// if obj face is a quad [0, 1, 2, 3],
-				//   then split into two triangles: [0, 1, 2], and [2, 3, 0]
-				obj_faces[f_index].v[0] = v[2] - 1;
-				obj_faces[f_index].v[1] = v[3] - 1;
-				obj_faces[f_index].v[2] = v[0] - 1;
+				// if quad then second triangle is [2, 3, 0]
+				obj_faces[obj_faces_size].v[0] = v[2] - 1;
+				obj_faces[obj_faces_size].v[1] = v[3] - 1;
+				obj_faces[obj_faces_size].v[2] = v[0] - 1;
 
-				obj_faces[f_index].vt[0] = t[2] - 1;
-				obj_faces[f_index].vt[1] = t[3] - 1;
-				obj_faces[f_index].vt[2] = t[0] - 1;
+				obj_faces[obj_faces_size].vt[0] = t[2] - 1;
+				obj_faces[obj_faces_size].vt[1] = t[3] - 1;
+				obj_faces[obj_faces_size].vt[2] = t[0] - 1;
 
-				obj_faces[f_index].vn[0] = n[2] - 1;
-				obj_faces[f_index].vn[1] = n[3] - 1;
-				obj_faces[f_index].vn[2] = n[0] - 1;
-				f_index++;
+				obj_faces[obj_faces_size].vn[0] = n[2] - 1;
+				obj_faces[obj_faces_size].vn[1] = n[3] - 1;
+				obj_faces[obj_faces_size].vn[2] = n[0] - 1;
+				obj_faces_size++;
 			}
 		}
 	}
 	fclose(file);
+	double time = gl_time(read_timer);
+	printf("[read_timer=%.3f]...", time);
 
 	if (errorCond) {
 		// double check this free is correct
@@ -1488,24 +1498,74 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 		return 0;
 	}
 
-	// @TODO: build the final mesh based on the loaded data
-	printf("no error cond\n");
-	mesh->vertices = (Vertex*)malloc(3*f_index*sizeof(Vertex)); // this is the max value, we can shrink later
-	mesh->faces = (Face*)malloc(f_index*sizeof(Face)); // this is the exact value
+	// build the final mesh based on the loaded data
+	mesh->vertices = (Vertex*)malloc(3 * obj_faces_size * sizeof(Vertex)); // overallocate to max size and shrink after
+	mesh->faces = (Face*)malloc(obj_faces_size * sizeof(Face));
+	bool has_uvcoords = (obj_uvcoords_size > 0);
+	bool has_vnormals = (obj_vnormals_size > 0);
 
-	// for each faceRef, hashmap each (vpos, vt, vn) --> index into mesh->vertices
+	// for each faceRef, hashmap each (vpos, vt, vn) --> (index in mesh->vertices)
 	// then assign face[i] indices to the result
-	// shrink mesh->vertices after
+	int map_size = (obj_faces_size * 4); // load factor 0.75
+	VertexMapNode** map = (VertexMapNode**)calloc(map_size, sizeof(VertexMapNode*));
+	VertexMapNode* arena = (VertexMapNode*)malloc(3 * obj_faces_size * sizeof(VertexMapNode));
+	VertexMapNode* arena_ptr = arena;
+	int A, B, C;
+	unsigned long long hash;
+	int num_vertices = 0;
+	for (int i = 0; i < obj_faces_size; i++) {
+		for (int j = 0; j < 3; j++) {
+			A = obj_faces[i].v[j];
+			B = obj_faces[i].vt[j]; if (B == -1) B = 0;
+			C = obj_faces[i].vn[j]; if (C == -1) C = 0;
 
-	mesh->num_vertices = v_index;
-	mesh->num_faces = f_index;
-	mesh->has_normals = (vn_index > 0);
+			// find triplet in map
+			hash = hash_triplet(A,B,C);
+			VertexMapNode** ptr = &map[hash % map_size];
+			while (*ptr != NULL && !((*ptr)->key.A == A && (*ptr)->key.B == B && (*ptr)->key.C == C)) {
+				ptr = &((*ptr)->next);
+			}
 
-	// double check this free is correct
+			// add node if not exist
+			if (*ptr == NULL) {
+				assert(arena_ptr < arena + 3 * obj_faces_size);
+				*ptr = arena_ptr++;
+				(*ptr)->key.A = A;
+				(*ptr)->key.B = B;
+				(*ptr)->key.C = C;
+				(*ptr)->val = num_vertices;
+				(*ptr)->next = NULL;
+
+				set3f(mesh->vertices[num_vertices].pos, obj_vertices[A].x, obj_vertices[A].y, obj_vertices[A].z);
+				if (has_uvcoords) {
+					mesh->vertices[num_vertices].texture[0] = obj_uvcoords[B].u;
+					mesh->vertices[num_vertices].texture[1] = obj_uvcoords[B].v;
+				}
+				if (has_vnormals) {
+					set3f(mesh->vertices[num_vertices].normal, obj_vnormals[C].x, obj_vnormals[C].y, obj_vnormals[C].z);
+				}
+				num_vertices++;
+			}
+
+			// add vertex to face
+			mesh->faces[i].vertexId[j] = (*ptr)->val;
+		}
+	}
+
+	mesh->vertices = (Vertex*)realloc(mesh->vertices, num_vertices * sizeof(Vertex));
+	mesh->num_vertices = num_vertices;
+	mesh->num_faces = obj_faces_size;
+	mesh->has_vertex_normals = has_vnormals;
+	mesh->has_texture_coords = has_uvcoords;
+
+	// ===== BEGIN CLEANUP =====
+	free(arena);
+	free(map);
 	free(obj_vertices);
 	free(obj_vnormals);
 	free(obj_uvcoords);
 	free(obj_faces);
+	// ===== END CLEANUP =====
 
 	return 1;
 }
@@ -1513,6 +1573,7 @@ int malloc_mesh_fields_from_obj_file_new(const char* filename, Mesh* mesh) {
 // @NOTE: assuming vertex_normal[i] goes to vertex[i] for all i
 // @TODO: speed this up. taking 2 seconds to read 125mb text file. speedup may require better non-text file format.
 int malloc_mesh_fields_from_obj_file_old(const char* filename, Mesh* mesh) {
+	printf("using deprecated obj loader...");
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
 	// size of mesh fields
 	size_t num_vertices = 0;
@@ -1662,7 +1723,7 @@ int malloc_mesh_fields_from_obj_file_old(const char* filename, Mesh* mesh) {
 
 	mesh->num_vertices = num_vertices;
 	mesh->num_faces = num_faces;
-	mesh->has_normals = vnormals_enabled;
+	mesh->has_vertex_normals = vnormals_enabled;
 	return 1;
 }
 
@@ -2034,8 +2095,8 @@ void renderScene(GLFWwindow* window) {
 		glUniform3fv(modelColorLoc, 1, meshInstance->color);
 		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, global_scene.model);
 		glUniformMatrix3fv(normLoc, 1, GL_FALSE, global_scene.normal);
-		glUniform1i(hasNormalsLoc, mesh->has_normals);
-		glUniform1i(hasTextureLoc, 0);
+		glUniform1i(hasNormalsLoc, mesh->has_vertex_normals);
+		glUniform1i(hasTextureLoc, mesh->has_texture_coords && meshInstance->globalTextureId > -1);
 
 		// Issue a draw call
 		glDrawElements(GL_TRIANGLES, mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
@@ -2140,6 +2201,10 @@ void setDefaultScene() {
 		set3f(meshInstance->pos, i*spacing, 0.0f, 0.0f);
 		meshInstance->physics = 2;
 		addMeshInstanceToGlobalScene(meshInstance);
+		if (i == 4) {
+			set3f(meshInstance->scale, 6.0f, 6.0f, 6.0f);
+			meshInstance->globalTextureId = 0;
+		}
 	}
 
 	// teapots falling to floor
@@ -2241,7 +2306,9 @@ int initMesh(Mesh* mesh) {
 	mesh->faces = nullptr; 
 	mesh->num_vertices = 0;
 	mesh->num_faces = 0;
-	mesh->has_normals = false;
+	
+	mesh->has_vertex_normals = false;
+	mesh->has_texture_coords = false;
 
 	mesh->has_convex_hull = false;
 	mesh->hullId = 0;
@@ -2421,15 +2488,17 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		,"resources/mesh/box.obj"
 		,"resources/mesh/teapot2.obj"
 		,"resources/mesh/guy.obj"
-		//,"resources/mesh/LibertStatue.obj"
+		,"resources/mesh/LibertStatue.obj"
 		//,"resources/large_files/HP_Portrait.obj"
 		//,"resources/large_files/kayle.obj"
 		//,"resources/extra_mesh/elf.obj"
 	};
 	const int vnormal_style = 1; // { 0 = flat | 1 = smooth }
+	
 	// this caused a bug because I'm trying to operate on elements of this array as if they were malloc'd individually
 	// in the future if I use a pool for this resource, just realloc directly on the global resource pool
 	// Mesh* meshList = (Mesh*)malloc(sizeof(Mesh) * num_meshes);  
+	
 	for (int i = 0; i < sizeof(list_of_meshes)/sizeof(list_of_meshes[0]); i++) {
 		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
 		initMesh(mesh);
@@ -2444,7 +2513,7 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		}
 		printf("(%.3f ms)\n", toc());
 		// if we couldn't load normals from file, then compute them now
-		if (!mesh->has_normals) {
+		if (!mesh->has_vertex_normals) {
 			printf("  >> Normals not found. Computing");
 			tic();
 			if (vnormal_style == 0) {
@@ -2558,17 +2627,23 @@ int main(int argc, char** argv) {
 	// ========================= END OPENGL SETUP =========================
 
 	// ========================= SETUP SCENE =========================
+	gl_timer scene_setup_timer = get_gl_timer();
 	initGlobalScene();
 	// @TODO: load_resources_onto_pools();
 	initGlobalResourcePoolMallocMeshAndMeshFields();
 	//init_global_resources();
 	initShaders();
 	setDefaultScene();
+	gl_time(scene_setup_timer);
+	printf("scene setup=[%.3f s]\n", scene_setup_timer.last_duration / 1000.0);
 	// ========================= END SCENE SETUP =========================
 
 
 	// ================ Playground to test 3D algorithms before render loop ===================
+	gl_timer convex_hull_timer = get_gl_timer();
 	executeConvexHulls();
+	gl_time(convex_hull_timer);
+	printf("convex hull=[%.3f s]\n", convex_hull_timer.last_duration / 1000.0);
 
 	printf("Begin render loop\n");
 	// ================ end playground ================
