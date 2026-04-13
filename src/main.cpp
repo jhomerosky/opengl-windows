@@ -379,13 +379,14 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 // ===== HASH FUNCTIONS =====
 // hashing strategy: hash = x * prime1 ^ y * prime2 ^ z * prime3
 // (x,y,z) = (int)((x,y,z) * 1e5)
+// @TODO: evaluate whether to keep this or scrap it.
+//        one idea for better deduplication might be building a graph with nearby neighbors and then building a maximal independent set
+//        would be fun to try luby's algorithm
 static inline unsigned long long float3Hash(const float in[3], const int decimalFilter) {
-
 	// 1.1234567 * 1e5 = 112345.67 --> 112345
 	// 1.1234587 * 1e5 = 112345.87 --> 112345
 	// 1.1234587 - 1.1234567 = 0.0000020 < 0.00001 = 1e-5
 	const long long primes[3] = {19349669, 83492791, 73856093};
-	//const int primes[3] = {113, 569, 877};
 	const long long vecints[3] = {
 		(long long)(in[0] * decimalFilter),
 		(long long)(in[1] * decimalFilter),
@@ -1072,6 +1073,8 @@ unsigned int support(const Mesh* mesh, const float dir[3], const float T[9]) {
 // input: two mesh instances
 // output: true if mesh instances collide; false otherwise
 bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
+	// @NOTE: we shouldn't need the convex hull to do this computation... but it should help the speed
+	// @TODO: evaluate whether to assert the hull exists. maybe default to the mesh itself
 	if (!global_resource_pool.meshes[objectA->globalMeshId]->has_convex_hull) return false;
 	if (!global_resource_pool.meshes[objectB->globalMeshId]->has_convex_hull) return false;
 	Mesh* hullA = global_resource_pool.meshes[global_resource_pool.meshes[objectA->globalMeshId]->hullId];
@@ -1380,7 +1383,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 			if (obj_vertices_size + 1 >= obj_vertices_capacity) {
 				obj_vertices_capacity *= 2;
 				obj_vertices = (Vec3f*)realloc(obj_vertices, obj_vertices_capacity * sizeof(Vec3f));
-				if (obj_vertices == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_vertices IN malloc_mesh_fields_from_obj_file_new\n"); }
+				if (obj_vertices == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_vertices IN malloc_mesh_fields_from_obj_file\n"); }
 			}
 			obj_vertices[obj_vertices_size].x = strtof(p, &p);
 			obj_vertices[obj_vertices_size].y = strtof(p, &p);
@@ -1393,7 +1396,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 			if (obj_uvcoords_size + 1 >= obj_uvcoords_capacity) {
 				obj_uvcoords_capacity *= 2;
 				obj_uvcoords = (Vec2f*)realloc(obj_uvcoords, obj_uvcoords_capacity * sizeof(Vec2f));
-				if (obj_uvcoords == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_uvcoords IN malloc_mesh_fields_from_obj_file_new\n"); }
+				if (obj_uvcoords == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_uvcoords IN malloc_mesh_fields_from_obj_file\n"); }
 			}
 			obj_uvcoords[obj_uvcoords_size].u = strtof(p, &p);
 			obj_uvcoords[obj_uvcoords_size].v = strtof(p, &p);
@@ -1405,7 +1408,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 			if (obj_vnormals_size + 1 >= obj_vnormals_capacity) {
 				obj_vnormals_capacity *= 2;
 				obj_vnormals = (Vec3f*)realloc(obj_vnormals, obj_vnormals_capacity * sizeof(Vec3f));
-				if (obj_vnormals == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_vnormals IN malloc_mesh_fields_from_obj_file_new\n"); }
+				if (obj_vnormals == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_vnormals IN malloc_mesh_fields_from_obj_file\n"); }
 			}
 			obj_vnormals[obj_vnormals_size].x = strtof(p, &p);
 			obj_vnormals[obj_vnormals_size].y = strtof(p, &p);
@@ -1419,7 +1422,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 			if (obj_faces_size + 2 >= obj_faces_capacity) {
 				obj_faces_capacity *= 2;
 				obj_faces = (FaceRef*)realloc(obj_faces, obj_faces_capacity * sizeof(FaceRef));
-				if (obj_faces == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_faces IN malloc_mesh_fields_from_obj_file_new\n"); }
+				if (obj_faces == nullptr) { printf("PANIC! REALLOC FAILED FOR obj_faces IN malloc_mesh_fields_from_obj_file\n"); }
 			}
 			
 			// parse faces
@@ -1489,8 +1492,8 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	printf("[read_timer=%.3f]...", time);
 
 	if (errorCond) {
-		// double check this free is correct
-		printf("errorCond in malloc_mesh_fields_from_obj_file_new\n");
+		// @TODO: either allow errorCond to be set to true or delete this block
+		printf("errorCond in malloc_mesh_fields_from_obj_file\n");
 		free(obj_vertices);
 		free(obj_vnormals);
 		free(obj_uvcoords);
@@ -1529,7 +1532,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 			// add node if not exist
 			if (*ptr == NULL) {
 				assert(arena_ptr < arena + 3 * obj_faces_size);
-				*ptr = arena_ptr++;
+				*ptr = arena_ptr++; // allocate from arena
 				(*ptr)->key.A = A;
 				(*ptr)->key.B = B;
 				(*ptr)->key.C = C;
@@ -2050,7 +2053,9 @@ void setDefaultScene() {
 		addMeshInstanceToGlobalScene(meshInstance);
 	}
 
+	// ===== texture testing =====
 	// setup liberty statue for demo
+	// @TODO: pipeline this
 	MeshInstance* liberty = global_scene.meshInstances[4];
 	set3f(liberty->scale, 6.0f, 6.0f, 6.0f);
 
