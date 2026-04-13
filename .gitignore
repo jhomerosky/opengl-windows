@@ -10,5 +10,6 @@ CppProperties.json
 # Custom folders
 resources/large_files/
 resources/extra_mesh/
+resources/extra_texture/
 artifacts/
 demos/

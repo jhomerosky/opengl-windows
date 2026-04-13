@@ -182,6 +182,7 @@ struct Skybox {
 struct MeshInstance {
 	unsigned int globalMeshId;
 	unsigned int globalTextureId;
+	bool has_texture;
 	float pos[3];
 	float scale[3];
 	float rotation[4]; // orientation as a quaternion rotation on (1, 0, 0, 0)
@@ -407,6 +408,7 @@ static inline unsigned long long hash_triplet(unsigned int a, unsigned int b, un
 // ===== END HASH FUNCTIONS =====
 
 // ===== GEOMETRY FUNCTIONS =====
+// @TODO: review this after new obj loader
 // @NOTE: assumes vertices are deduplicated
 // compute each face's normal vector, add vnormal to each component vector, normalize all vectors
 int compute_vnormal_smooth(Mesh* mesh) {
@@ -443,6 +445,7 @@ int compute_vnormal_smooth(Mesh* mesh) {
 	return 0;
 }
 
+// @TODO: reivew this after new obj loader
 // deduplicate a mesh's vertex list on position with tolerance of 1e-(tol)
 // @TODO: some vertices are already used by many different faces and this will still check those anyways
 //        which results in a very large number of unnecessary checks. can we eliminate that behavior?
@@ -510,13 +513,14 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	return dupe_count;
 }
 
+// @TODO: review this after new obj loader
 // Mutates the size of the mesh to 3*(num_faces) vertices.
 // Face-vertices: a vertex contains { pos, vn, uv } not just position. So consider a face-vertex as the unique combination of vertex and the face that uses it.
 int realloc_mesh_with_face_vertices(Mesh* mesh) {
 	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces);
 	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in realloc_mesh_with_face_vertices\n"); return -1; }
 
-	// NOTE: benchmark demonstrated >2x speedup multithreading speedup
+	// NOTE: benchmark demonstrated >2x speedup with omp
 	#pragma omp parallel for
 	for (int i = 0; i < mesh->num_faces; i++) {
 		// add to new list; note no overlap between threads
@@ -536,6 +540,7 @@ int realloc_mesh_with_face_vertices(Mesh* mesh) {
 	return 0;
 }
 
+// @TODO: review this after new obj loader
 // Compute vnormals for flat shading. Each vertex of a face uses the face's normal.
 // @NOTE: assuming CCW face orientation, faces are triangles, vertex list is face-vertex
 int compute_vnormal_flat(Mesh* mesh) {
@@ -1812,7 +1817,7 @@ int addMeshInstanceToGlobalScene(MeshInstance* meshInstance) {
 		global_scene.meshInstances[global_scene.meshInstanceCount] = meshInstance;
 		global_scene.meshInstanceCount++;
 	}
-	return global_scene.meshInstanceCount;
+	return global_scene.meshInstanceCount - 1;
 }
 
 // register mesh; returns Id of registered mesh
@@ -1826,14 +1831,14 @@ int addMeshToGlobalPool(Mesh* mesh) {
 int addTextureToGlobalPool(Texture* texture) {
 	if (global_resource_pool.textureCount != __MAX_TEXTURES__)
 		global_resource_pool.textures[global_resource_pool.textureCount++] = texture;
-	return global_resource_pool.textureCount;
+	return global_resource_pool.textureCount - 1;
 }
 
 // register shader
 int addShaderToGlobalPool(Shader* shader) {
 	if (global_resource_pool.shaderCount != __MAX_SHADERS__)
 		global_resource_pool.shaders[global_resource_pool.shaderCount++] = shader;
-	return global_resource_pool.shaderCount;
+	return global_resource_pool.shaderCount - 1;
 }
 
 // Upload mesh to the GPU
@@ -2042,6 +2047,7 @@ void renderScene(GLFWwindow* window) {
 	unsigned int hasNormalsLoc = glGetUniformLocation(basicShader, "hasNormals");
 	unsigned int hasTextureLoc = glGetUniformLocation(basicShader, "hasTexture");
 	unsigned int projviewLoc = glGetUniformLocation(basicShader, "projview");
+	unsigned int textureSamplerLoc = glGetUniformLocation(basicShader, "textureSampler");
 
 	// skybox shader uniforms
 	unsigned int skyboxLoc = glGetUniformLocation(skyboxShader, "skybox");
@@ -2051,10 +2057,11 @@ void renderScene(GLFWwindow* window) {
 	glfwGetFramebufferSize(window, &global_scene.windowWidth, &global_scene.windowHeight);
 	set_perspective_mat(global_scene.proj, fovy, (float)global_scene.windowWidth / (float)global_scene.windowHeight, near, far);
 	set_lookat_mat(global_scene.view, global_scene.camera.pos, global_scene.camera.front, global_scene.camera.up);
-	mat4_mul(global_scene.projview, global_scene.proj, global_scene.view); 
+	mat4_mul(global_scene.projview, global_scene.proj, global_scene.view);
 
 	// upload uniforms to shader
 	glUseProgram(basicShader);
+	glUniform1i(textureSamplerLoc, 0); // use GL_TEXTURE0 for textureSampler
 	glUniformMatrix4fv(projviewLoc, 1, GL_FALSE, global_scene.projview);
 	glUniform3fv(lightPosLoc, 1, global_scene.lightSource.pos);
 	glUniform3fv(lightColorLoc, 1, global_scene.lightSource.color);
@@ -2072,7 +2079,6 @@ void renderScene(GLFWwindow* window) {
 		// Build model and normal matrix
 		//   Model = Translate * Rotate * Scale
 		//   Normal = mat3(Model^(-T))
-		// new implementation with no glm dependency
 		// NOTE: We could order this cleverly to do everything in place with no temps, but I don't think the added complexity is worth it
 		float translate_temp[16];
 		float rotate_temp[16];
@@ -2084,14 +2090,21 @@ void renderScene(GLFWwindow* window) {
 		mat4_mul(global_scene.model, rotate_temp, scale_temp);
 		mat4_mul(global_scene.model, translate_temp, global_scene.model);
 		
-
 		// upload uniforms to the shader
 		glUseProgram(basicShader);
 		glUniform3fv(modelColorLoc, 1, meshInstance->color);
 		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, global_scene.model);
 		glUniformMatrix3fv(normLoc, 1, GL_FALSE, global_scene.normal);
 		glUniform1i(hasNormalsLoc, mesh->has_vertex_normals);
-		glUniform1i(hasTextureLoc, mesh->has_texture_coords && meshInstance->globalTextureId > -1);
+		
+		// upload texture to the shader
+		glActiveTexture(GL_TEXTURE0);
+		if (mesh->has_texture_coords && meshInstance->has_texture) {
+			glBindTexture(GL_TEXTURE_2D, global_resource_pool.textures[meshInstance->globalTextureId]->textureID);
+			glUniform1i(hasTextureLoc, true);
+		} else {
+			glUniform1i(hasTextureLoc, false);
+		}
 
 		// Issue a draw call
 		glDrawElements(GL_TRIANGLES, mesh->num_faces * 3, GL_UNSIGNED_INT, 0);
@@ -2172,7 +2185,8 @@ void renderScene(GLFWwindow* window) {
 // quick mesh instance default init
 void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
 	meshInstance->globalMeshId = resourceId;
-	meshInstance->globalTextureId = -1;
+	meshInstance->globalTextureId = 0;
+	meshInstance->has_texture = false;
 
 	set3f(meshInstance->pos, 0.0f, 0.0f, 0.0f);
 	set3f(meshInstance->color, 1.0f, 1.0f, 1.0f);
@@ -2201,31 +2215,32 @@ void setDefaultScene() {
 	// setup liberty statue for demo
 	MeshInstance* liberty = global_scene.meshInstances[4];
 	set3f(liberty->scale, 6.0f, 6.0f, 6.0f);
-	/*liberty->globalTextureId = 0;
 
-	Texture libertyTexture;
+	Texture* libertyTexture = (Texture*)malloc(sizeof(Texture));
+	libertyTexture->textureID = 0;
 	unsigned int texture;
 	glGenTextures(1, &texture);
 	glBindTexture(GL_TEXTURE_2D, texture);
 
 	// set the texture wrapping/filtering options (on the currently bound texture object)
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);	
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
 	int textureWidth, textureHeight, nrChannels;
 	unsigned char *textureData = stbi_load("resources/texture/Liberty-GreenBronze-1.bmp", &textureWidth, &textureHeight, &nrChannels, 0);
 	if (textureData) {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, textureWidth, textureHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, textureData);
+		GLenum format = (nrChannels == 4) ? GL_RGBA : GL_RGB;
+		glTexImage2D(GL_TEXTURE_2D, 0, format, textureWidth, textureHeight, 0, format, GL_UNSIGNED_BYTE, textureData);
 		glGenerateMipmap(GL_TEXTURE_2D);
 	} else {
 		printf("failed to load texture\n");
 	}
 	stbi_image_free(textureData);
-	libertyTexture.textureID = texture;
-	int textureId = addTextureToGlobalPool(&libertyTexture);
+	libertyTexture->textureID = texture;
+	int textureId = addTextureToGlobalPool(libertyTexture);
 	liberty->globalTextureId = textureId;
+	liberty->has_texture = true;
 	// END TEXTURE TESTING
-	*/
 
 	// teapots falling to floor
 	// floor

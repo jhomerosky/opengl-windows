@@ -17,9 +17,12 @@ if "%1"=="clean" (
     if exist *.pdb del *.pdb
     if exist *.obj del *.obj
     if exist *.ilk del *.ilk
+    if exist *.rdi del *.rdi
     echo Done.
     exit /b 0
 )
+
+
 
 echo Building...
 %CC% %CFLAGS% %INCLUDES% %SOURCES% /link %LIBPATHS% %LIBS% /OUT:%OUTPUT% /DEBUG:FULL /INCREMENTAL:NO /PDB:run.pdb
@@ -33,6 +36,13 @@ if !errorlevel! equ 0 (
     exit /b !errorlevel!
 )
 
+if "%1" == "debug" (
+    echo Opening debugger...
+    start raddbg.exe run.exe
+    exit /b 0
+)
+
 if "%1"=="run" (
     run.exe
 )
+
