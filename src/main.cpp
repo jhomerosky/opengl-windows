@@ -460,9 +460,12 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	const float eps = 1.0/(float)decimalFilter;
 	
 	// allocate memory for map and new vertex list
-	size_t map_size = mesh->num_faces/2;
+	size_t map_size = mesh->num_faces * 4;
 	HashNode** map = (HashNode**)calloc(map_size, sizeof(HashNode*));
-	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces); // upper bound size, resize later
+	HashNode* arena = (HashNode*)calloc(3 * mesh->num_faces, sizeof(HashNode));
+	HashNode* arena_ptr = arena;
+	HashNode* arena_end = arena + 3 * mesh->num_faces;
+	Vertex* new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces); // upper bound size, resize later
 	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in deduplicate_mesh_vertices\n"); free(map); return -1; }
 	unsigned int vertex_index = 0;
 
@@ -486,7 +489,8 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 
 			// if vertex is not found in the map then add it
 			if (!found) {
-				*ptr = (HashNode*)calloc(1, sizeof(HashNode));
+				assert(arena_ptr < arena_end);
+				*ptr = arena_ptr++;
 				(*ptr)->data = vertex_index++;
 				set3fv(new_vertex_list[(*ptr)->data].pos, v->pos);
 			}
@@ -497,15 +501,7 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	int dupe_count = mesh->num_vertices - vertex_index;
 
 	// free the map's contents
-	for (int i = 0; i < map_size; i++) {
-		HashNode* ptr = map[i];
-		HashNode* temp;
-		while (ptr != NULL) {
-			temp = ptr->next;
-			free(ptr);
-			ptr = temp;
-		}
-	}
+	free(arena);
 	free(map);
 	free(mesh->vertices);
 	mesh->vertices = (Vertex*)realloc(new_vertex_list, vertex_index*sizeof(Vertex));
@@ -580,6 +576,7 @@ int compute_vnormal_flat(Mesh* mesh) {
 // input: mesh
 // output: mesh representing the convex hull
 // quickhull algorithm
+// @TODO: review memory allocation (move to arenas?), macro usage, general cleanup
 Mesh* makeConvexHull(Mesh* mesh) {
 	const float __CONVEX_HULL_DEDUP_EPS__     = 1e-6f;
 	const int   __CONVEX_HULL_DEDUP_INV_EPS__ = 1e6;
@@ -681,6 +678,9 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		// use a hash set to dedup vertices
 		size_t set_size = mesh->num_vertices;
 		VertexHashSetNode** set = (VertexHashSetNode**)calloc(set_size, sizeof(VertexHashSetNode*));
+		VertexHashSetNode* arena = (VertexHashSetNode*)calloc(mesh->num_vertices, sizeof(VertexHashSetNode));
+		VertexHashSetNode* arena_ptr = arena;
+		VertexHashSetNode* arena_end = arena + mesh->num_vertices;
 		if (set == nullptr) { fprintf(stderr, "Failed to malloc hash set in makeConvexHull\n"); free(pointList); return nullptr; }
 		for (int i = 0; i < mesh->num_vertices; i++) {
 			Vertex* v = &(mesh->vertices[i]);
@@ -699,22 +699,15 @@ Mesh* makeConvexHull(Mesh* mesh) {
 
 			// if vertex is not found in the set then add it
 			if (!found) {
-				*ptr = (VertexHashSetNode*)calloc(1, sizeof(VertexHashSetNode));
+				assert(arena_ptr < arena_end);
+				*ptr = arena_ptr++;
 				(*ptr)->vertex = v;
 				set3fv(pointList[pointListSize].pos, v->pos);
 				pointList[pointListSize].assigned = false;
 				pointListSize++;
 			}
 		}
-		for (int i = 0; i < set_size; i++) {
-			VertexHashSetNode* ptr = set[i];
-			VertexHashSetNode* temp;
-			while (ptr != NULL) {
-				temp = ptr->next;
-				free(ptr);
-				ptr = temp;
-			}
-		}
+		free(arena);
 		free(set);
 		pointList = (Point*)realloc(pointList, pointListSize * sizeof(Point));
 	}
@@ -820,6 +813,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		new_facet(facetList, facetListSize, p1, p2, p3, centroid);
 
 		// insert ridges into ridge map
+		// @TODO: roll into loop k=[0,1,2], use arena for ridge map, get rid of macro
 		for (int i = 0; i < 4; i++) {
 			uint64_t hash[3];
 			hash[0] = hash_pair(facetList[i].points[0], facetList[i].points[1]);
@@ -953,6 +947,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 		}
 
 		// update ridge map
+		// @TODO: roll into loop k=[0,1,2], use arena for ridge map, get rid of macro
 		for (size_t j = 0; j < facetListSize; j++) {
 			if (!facetList[j].isNew) continue;
 			uint64_t hash[3];
@@ -2201,11 +2196,36 @@ void setDefaultScene() {
 		set3f(meshInstance->pos, i*spacing, 0.0f, 0.0f);
 		meshInstance->physics = 2;
 		addMeshInstanceToGlobalScene(meshInstance);
-		if (i == 4) {
-			set3f(meshInstance->scale, 6.0f, 6.0f, 6.0f);
-			meshInstance->globalTextureId = 0;
-		}
 	}
+
+	// setup liberty statue for demo
+	MeshInstance* liberty = global_scene.meshInstances[4];
+	set3f(liberty->scale, 6.0f, 6.0f, 6.0f);
+	/*liberty->globalTextureId = 0;
+
+	Texture libertyTexture;
+	unsigned int texture;
+	glGenTextures(1, &texture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+
+	// set the texture wrapping/filtering options (on the currently bound texture object)
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);	
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+	int textureWidth, textureHeight, nrChannels;
+	unsigned char *textureData = stbi_load("resources/texture/Liberty-GreenBronze-1.bmp", &textureWidth, &textureHeight, &nrChannels, 0);
+	if (textureData) {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, textureWidth, textureHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, textureData);
+		glGenerateMipmap(GL_TEXTURE_2D);
+	} else {
+		printf("failed to load texture\n");
+	}
+	stbi_image_free(textureData);
+	libertyTexture.textureID = texture;
+	int textureId = addTextureToGlobalPool(&libertyTexture);
+	liberty->globalTextureId = textureId;
+	// END TEXTURE TESTING
+	*/
 
 	// teapots falling to floor
 	// floor
