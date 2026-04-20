@@ -381,7 +381,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 // (x,y,z) = (int)((x,y,z) * 1e5)
 // @TODO: evaluate whether to keep this or scrap it.
 //        one idea for better deduplication might be building a graph with nearby neighbors and then building a maximal independent set
-//        would be fun to try luby's algorithm
+//        would be fun to try luby's algorithm. After some thought, this doesn't make sense because we would need to build the graph in the first place.
 static inline unsigned long long float3Hash(const float in[3], const int decimalFilter) {
 	// 1.1234567 * 1e5 = 112345.67 --> 112345
 	// 1.1234587 * 1e5 = 112345.87 --> 112345
@@ -413,6 +413,12 @@ static inline unsigned long long hash_triplet(unsigned int a, unsigned int b, un
 // @NOTE: assumes vertices are deduplicated
 // compute each face's normal vector, add vnormal to each component vector, normalize all vectors
 int compute_vnormal_smooth(Mesh* mesh) {
+	// init to zero
+	#pragma omp parallel for
+	for (int i  = 0; i < mesh->num_vertices; i++) {
+		set3f(mesh->vertices[i].normal, 0.0f, 0.0f, 0.0f);
+	}
+
 	// @TODO: can we parallelize computing normals and do addition later?
 	for (int i = 0; i < mesh->num_faces; i++) {
 		float e1[3];
@@ -423,11 +429,9 @@ int compute_vnormal_smooth(Mesh* mesh) {
 		Vertex *const v1 = &(mesh->vertices[mesh->faces[i].vertexId[1]]);
 		Vertex *const v2 = &(mesh->vertices[mesh->faces[i].vertexId[2]]);
 		
-		// edges of triangle
+		// compute triangle normal with edges of triangle
 		sub3f(e1, v1->pos, v0->pos);
 		sub3f(e2, v2->pos, v1->pos);
-
-		// get normal of triangle
 		cross3f(res, e1, e2);
 
 		// add this face's vnormal to each vertex in the face
@@ -2373,9 +2377,9 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	};
 	const int vnormal_style = 1; // { 0 = flat | 1 = smooth }
 	
+	// @NOTE: I want to do something like Mesh* meshList = (Mesh*)malloc(sizeof(Mesh) * num_meshes); 
 	// this caused a bug because I'm trying to operate on elements of this array as if they were malloc'd individually
 	// in the future if I use a pool for this resource, just realloc directly on the global resource pool
-	// Mesh* meshList = (Mesh*)malloc(sizeof(Mesh) * num_meshes);  
 	
 	for (int i = 0; i < sizeof(list_of_meshes)/sizeof(list_of_meshes[0]); i++) {
 		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
@@ -2396,13 +2400,12 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 			tic();
 			if (vnormal_style == 0) {
 				printf(" flat normals...");
-				realloc_mesh_with_face_vertices(mesh);
+				// realloc_mesh_with_face_vertices(mesh);
 				compute_vnormal_flat(mesh);
 			} else if (vnormal_style == 1) {
 				printf(" smooth normals...");
-				const int tol = 5;
-				int dupe_count = deduplicate_mesh_vertices(mesh, tol);
-				printf("(dropped dupes: %d)...", dupe_count);
+				//int dupe_count = deduplicate_mesh_vertices(mesh, 5);
+				//printf("(dropped dupes: %d)...", dupe_count);
 				compute_vnormal_smooth(mesh);
 			} else {
 				printf(" | WARNING: vnormal_style not set. Unable to load normals.\n");
