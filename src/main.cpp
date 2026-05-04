@@ -34,19 +34,20 @@ struct LightSource;
 struct Scene;
 struct ResourcePool;
 struct Metrics;
+struct Simplex;
 
 // custom initializers
 // @TODO: sort the initializers here
 
 // custom deallocators
-void free_mesh(Mesh* mesh);
-void free_shader(Shader* shader);
-void free_scene(Scene* scene);
-void free_resource_pool(ResourcePool* pool);
+void free_mesh(Mesh *mesh);
+void free_shader(Shader *shader);
+void free_scene(Scene *scene);
+void free_resource_pool(ResourcePool *pool);
 
 // callbacks
-void framebuffer_size_callback(GLFWwindow* window, int width, int height);
-void mouse_callback(GLFWwindow* window, double xpos, double ypos);
+void framebuffer_size_callback(GLFWwindow *window, int width, int height);
+void mouse_callback(GLFWwindow *window, double xpos, double ypos);
 
 // hashes
 static inline unsigned long long float3Hash(const float in[3], const int decimalFilter);
@@ -54,60 +55,64 @@ static inline uint64_t hash_pair(const uint32_t a, const uint32_t b);
 static inline unsigned long long hash_triplet(unsigned int a, unsigned int b, unsigned int c);
 
 // geometry
-int compute_vnormal_smooth(Mesh* mesh);
-int deduplicate_mesh_vertices(Mesh* mesh, const int tol);
-int realloc_mesh_with_face_vertices(Mesh* mesh);
-int compute_vnormal_flat(Mesh* mesh);
-Mesh* makeConvexHull(Mesh* mesh);
-unsigned int support(Mesh* mesg, float dir[3]);
-bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB);
+int compute_vnormal_smooth(Mesh *mesh);
+int deduplicate_mesh_vertices(Mesh *mesh, const int tol);
+int realloc_mesh_with_face_vertices(Mesh *mesh);
+int compute_vnormal_flat(Mesh *mesh);
+Mesh* makeConvexHull(Mesh *mesh);
+unsigned int support(Mesh *mesh, float dir[3]);
+bool GJK_intersect(MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex);
+void EPA_response(Simplex *simplex);
 
 // shader handling
-GLuint compileShader(GLenum type, const char* source);
-GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource);
+GLuint compileShader(GLenum type, const char *source);
+GLuint createShaderProgram(const char *vertexSource, const char *fragmentSource);
 
 // load from file
-int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh);
-unsigned int loadCubemap(const char** textureFiles);
-char* mallocTextFromFile(const char* filename);
-GLuint loadShader(char* vertexShaderSource, char* fragmentShaderSource);
+int malloc_mesh_fields_from_obj_file(const char *filename, Mesh *mesh);
+unsigned int loadCubemap(const char **textureFiles);
+char* mallocTextFromFile(const char *filename);
+GLuint loadShader(char *vertexShaderSource, char *fragmentShaderSource);
 
 // register
-int addMeshInstanceToGlobalScene(MeshInstance* meshInstance);
-int addMeshToGlobalPool(Mesh* mesh);
-int addTextureToGlobalPool(Texture* texture);
-int addShaderToGlobalPool(Shader* shader);
+int addMeshInstanceToGlobalScene(MeshInstance *meshInstance);
+int addMeshToGlobalPool(Mesh *mesh);
+int addTextureToGlobalPool(Texture *texture);
+int addShaderToGlobalPool(Shader *shader);
 void uploadMeshBuffers(const Mesh *mesh);
 
 // ????
-void swapCursorInputMode(GLFWwindow* window);
-void rotateCamera(GLFWwindow* window, float yaw, float pitch);
+void swapCursorInputMode(GLFWwindow *window);
+void rotateCamera(GLFWwindow *window, float yaw, float pitch);
 
 // main loop
-void processInput(GLFWwindow* window, float deltaTime);
-void updateTime(Metrics* metrics);
-void updateScene(GLFWwindow* window, float deltaTime);
-void renderScene(GLFWwindow* window);
+void processInput(GLFWwindow *window, float deltaTime);
+void updateTime(Metrics *metrics);
+void updateScene(GLFWwindow *window, float deltaTime);
+void renderScene(GLFWwindow *window);
 
 // set defaults
-void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId);
+void setDefaultMeshInstance(MeshInstance *meshInstance, const int resourceId);
 void setDefaultScene();
 
 // init
 void initOpenGL();
-void initCamera(Camera& camera);
-void initLightSource(LightSource& lightSource);
-void initMouseInfo(MouseInfo& mouse);
-void initMetrics(Metrics* metrics);
-int initMesh(Mesh* mesh);
+void initCamera(Camera *camera);
+void initLightSource(LightSource *lightSource);
+void initMouseInfo(MouseInfo *mouse);
+void initMetrics(Metrics *metrics);
+void initMesh(Mesh *mesh);
 void initShaders();
-void initSkybox();
-int initGlobalResourcePoolMallocMeshAndMeshFields();
+void initSkybox(Skybox *skybox);
 void initGlobalScene();
+void initGlobalResourcePool();
+void initMeshes();
+void initTextures();
+void initShaders();
 
 // algorithm handlers
 void executeConvexHulls();
-void executeCollisionCheck();
+void executeCollisions();
 
 // print
 void printGlobalResourcePool();
@@ -131,8 +136,8 @@ struct Face {
 
 // Mesh is a resource containing a list of vertices, a list of faces and some metadata
 struct Mesh {
-	Vertex* vertices;
-	Face* faces;
+	Vertex *vertices;
+	Face *faces;
 	size_t num_vertices;
 	size_t num_faces;
 
@@ -142,7 +147,7 @@ struct Mesh {
 	bool has_convex_hull;
 	int hullId; // -1 if we are a hull, otherwise point into global mesh pool
 
-	char* name; // string name to recognize the hull
+	char *name; // string name to recognize the hull
 
 	unsigned int VAO;
 	unsigned int VBO;
@@ -163,8 +168,8 @@ struct Shader {
 	// not going to be many uniforms, maybe 10-20 max. maybe it's faster to just O(n) lookup.
 	
 	// until (if) we implement hashmap, do a lookup on uniformNames, use index in uniformLoc
-	char** uniformNames;
-	unsigned int* uniformLoc;
+	char **uniformNames;
+	unsigned int *uniformLoc;
 	int uniformCount;
 };
 
@@ -237,7 +242,7 @@ struct LightSource {
 
 // Scene is meant to be a global scope singleton containing world state
 struct Scene {
-	MeshInstance* meshInstances[__MAX_MODELS__];
+	MeshInstance *meshInstances[__MAX_MODELS__];
 	int meshInstanceCount;
 
 	// these are here so we can allocate memory once and reuse it in the render loop
@@ -260,20 +265,20 @@ struct Scene {
 
 // ResourcePool is meant to be a store of assets with IDs for MeshInstances to reference
 struct ResourcePool {
-	Mesh* meshes[__MAX_MESHES__];
+	Mesh *meshes[__MAX_MESHES__];
 	int meshCount;
 
-	Texture* textures[__MAX_TEXTURES__];
+	Texture *textures[__MAX_TEXTURES__];
 	int textureCount;
 
-	Shader* shaders[__MAX_SHADERS__];
+	Shader *shaders[__MAX_SHADERS__];
 	int shaderCount;
 	
 	// @TODO: add textures here? Or have 2 resourcePools?
 	// ResourcePool globalMeshPool;
 	// ResourcePool globalTexturePool;
 	// VS
-	// ResourcePool { Mesh* meshes[]; Texture* textures[]; }
+	// ResourcePool { Mesh *meshes[]; Texture *textures[]; }
 
 	// @TODO?: map string name --> resourceID
 	// Why should this pool own a map to its resources?
@@ -293,6 +298,12 @@ struct Metrics {
 	int FRAMES_TO_COUNT;
 	float fps;
 };
+
+struct Simplex { 
+	float points[4][3];
+	int length;
+};
+
 #pragma endregion STRUCTDEF 
 // ===== END STRUCT DEFINITIONS =====
 
@@ -310,24 +321,28 @@ void free_mesh(Mesh* mesh) {
 	free(mesh);
 }
 
-void free_shader(Shader* shader) {
+void free_texture(Texture *texture) {
+	free(texture);
+}
+
+void free_shader(Shader *shader) {
 	free(shader->uniformNames);
 	free(shader->uniformLoc);
 	free(shader);
 }
 
-void free_scene(Scene* scene) {
+void free_scene(Scene *scene) {
 	for (int i = 0; i < scene->meshInstanceCount; i++) {
 		free(scene->meshInstances[i]);
 	}
 }
 
-void free_resource_pool(ResourcePool* pool) {
+void free_resource_pool(ResourcePool *pool) {
 	for (int i = 0; i < pool->meshCount; i++) {
 		free_mesh(pool->meshes[i]);
 	}
 	for (int i = 0; i < pool->textureCount; i++) {
-		free(pool->textures[i]);
+		free_texture(pool->textures[i]);
 	}
 	for (int i = 0; i < pool->shaderCount; i++) {
 		free_shader(pool->shaders[i]);
@@ -337,12 +352,12 @@ void free_resource_pool(ResourcePool* pool) {
 
 // ===== CALLBACK FUNCTIONS =====
 // function to execute when the window is resized
-void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
 	glViewport(0, 0, width, height);
 }
 
 // function to execute when mouse input is received
-void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
+void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
 	MouseInfo *mouse = &(global_scene.mouse);
 	Camera *camera = &(global_scene.camera);
 	if (mouse->firstMouse) {
@@ -379,7 +394,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 // ===== HASH FUNCTIONS =====
 // hashing strategy: hash = x * prime1 ^ y * prime2 ^ z * prime3
 // (x,y,z) = (int)((x,y,z) * 1e5)
-// @TODO: evaluate whether to keep this or scrap it.
+// @TODO: evaluate whether to keep this or scrap it. I'm leaning towards this was a bad idea.
 //        one idea for better deduplication might be building a graph with nearby neighbors and then building a maximal independent set
 //        would be fun to try luby's algorithm. After some thought, this doesn't make sense because we would need to build the graph in the first place.
 static inline unsigned long long float3Hash(const float in[3], const int decimalFilter) {
@@ -412,7 +427,7 @@ static inline unsigned long long hash_triplet(unsigned int a, unsigned int b, un
 // @TODO: review this after new obj loader
 // @NOTE: assumes vertices are deduplicated
 // compute each face's normal vector, add vnormal to each component vector, normalize all vectors
-int compute_vnormal_smooth(Mesh* mesh) {
+int compute_vnormal_smooth(Mesh *mesh) {
 	// init to zero
 	#pragma omp parallel for
 	for (int i  = 0; i < mesh->num_vertices; i++) {
@@ -457,10 +472,10 @@ int compute_vnormal_smooth(Mesh* mesh) {
 // @NOTE: deduplication helps with smooth shading, but in the end especially with texture uv coords we will still need
 //        to use face-vertices on gpu. Time spent improving this is probably not productive.
 // returns -1 on error or num of duplicates dropped on success
-int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
+int deduplicate_mesh_vertices(Mesh *mesh, const int tol) {
 	struct HashNode {
 		unsigned int data; // map vertex.pos -> index in the new vertex array (vertex_list[data].pos is the key to match)
-		HashNode* next;
+		HashNode *next;
 	};
 
 	int decimalFilter = 1;
@@ -469,21 +484,21 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 	
 	// allocate memory for map and new vertex list
 	size_t map_size = mesh->num_faces * 4;
-	HashNode** map = (HashNode**)calloc(map_size, sizeof(HashNode*));
-	HashNode* arena = (HashNode*)calloc(3 * mesh->num_faces, sizeof(HashNode));
-	HashNode* arena_ptr = arena;
-	HashNode* arena_end = arena + 3 * mesh->num_faces;
-	Vertex* new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces); // upper bound size, resize later
+	HashNode **map = (HashNode**)calloc(map_size, sizeof(HashNode*));
+	HashNode *arena = (HashNode*)calloc(3 * mesh->num_faces, sizeof(HashNode));
+	HashNode *arena_ptr = arena;
+	HashNode *arena_end = arena + 3 * mesh->num_faces;
+	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces); // upper bound size, resize later
 	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in deduplicate_mesh_vertices\n"); free(map); return -1; }
 	unsigned int vertex_index = 0;
 
 	for (int i = 0; i < mesh->num_faces; i++) {
-		Face* temp = &(mesh->faces[i]);
+		Face *temp = &(mesh->faces[i]);
 		for (int j = 0; j < 3; j++) {
 			// hash each vertex
-			Vertex* v = &(mesh->vertices[temp->vertexId[j]]);
+			Vertex *v = &(mesh->vertices[temp->vertexId[j]]);
 			unsigned int hash = float3Hash(v->pos, decimalFilter);
-			HashNode** ptr = &map[hash % map_size];
+			HashNode **ptr = &map[hash % map_size];
 			
 			// check if vertex is already in map
 			bool found = false;
@@ -521,7 +536,7 @@ int deduplicate_mesh_vertices(Mesh* mesh, const int tol) {
 // @TODO: review this after new obj loader
 // Mutates the size of the mesh to 3*(num_faces) vertices.
 // Face-vertices: a vertex contains { pos, vn, uv } not just position. So consider a face-vertex as the unique combination of vertex and the face that uses it.
-int realloc_mesh_with_face_vertices(Mesh* mesh) {
+int realloc_mesh_with_face_vertices(Mesh *mesh) {
 	Vertex *new_vertex_list = (Vertex*)malloc(sizeof(Vertex) * 3 * mesh->num_faces);
 	if (new_vertex_list == nullptr) { fprintf(stderr, "Failed to malloc the new vertex list in realloc_mesh_with_face_vertices\n"); return -1; }
 
@@ -548,7 +563,7 @@ int realloc_mesh_with_face_vertices(Mesh* mesh) {
 // @TODO: review this after new obj loader
 // Compute vnormals for flat shading. Each vertex of a face uses the face's normal.
 // @NOTE: assuming CCW face orientation, faces are triangles, vertex list is face-vertex
-int compute_vnormal_flat(Mesh* mesh) {
+int compute_vnormal_flat(Mesh *mesh) {
 	// for each face:
 	// e1 = v2 - v1, e2 = v3 - v2
 	// fnormal = normalize(cross(e1, e2))
@@ -587,7 +602,7 @@ int compute_vnormal_flat(Mesh* mesh) {
 // output: mesh representing the convex hull
 // quickhull algorithm
 // @TODO: review memory allocation (move to arenas?), macro usage, general cleanup
-Mesh* makeConvexHull(Mesh* mesh) {
+Mesh* makeConvexHull(Mesh *mesh) {
 	const float __CONVEX_HULL_DEDUP_EPS__     = 1e-6f;
 	const int   __CONVEX_HULL_DEDUP_INV_EPS__ = 1e6;
 	// smaller vertex for algorithm
@@ -599,7 +614,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 
 	// Dynamic array of uint
 	struct IndexList {
-		unsigned int* items;
+		unsigned int *items;
 		size_t length;
 		size_t capacity;
 	};
@@ -623,7 +638,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	struct RidgeMapNode {
 		uint64_t key; // we use the hash as the key since the hash function is a bijection
 		uint32_t val;
-		RidgeMapNode* next;
+		RidgeMapNode *next;
 	};
 
 	// NOTE: Using macro helpers so I can avoid lifting struct definitions out of this function.
@@ -632,7 +647,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// Initialize a new facet on the facetList. Does NOT check out of bounds.
 	#define new_facet(fList, fListIndex, indexA, indexB, indexC, pInterior) do {\
 		float interiorToA[3];\
-		Facet* currentFacet = &fList[(fListIndex)];\
+		Facet *currentFacet = &fList[(fListIndex)];\
 		set3u(currentFacet->points, (indexA), (indexB), (indexC));\
 		set_triangle_normal(currentFacet->normal, pointList[(indexA)].pos, pointList[(indexB)].pos, pointList[(indexC)].pos);\
 		/* if normal . (A - centroid) < 0, then our normal points inward so reorient the triangle */\
@@ -652,7 +667,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 
 	// insert into the ridge map with calloc
 	#define insert_ridge_map(map, map_size, new_key, new_val) do {\
-		RidgeMapNode** ptr = &(map[(new_key) % (map_size)]);\
+		RidgeMapNode **ptr = &(map[(new_key) % (map_size)]);\
 		while (*ptr != NULL && (*ptr)->key != (new_key)) {\
 			ptr = &((*ptr)->next);\
 		}\
@@ -673,7 +688,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	} while (0)
 
 	// convexHull guaranteed to have size <= current size so we prealloc here and resize at the end
-	Point* pointList = (Point*)malloc(sizeof(Point) * mesh->num_vertices);
+	Point *pointList = (Point*)malloc(sizeof(Point) * mesh->num_vertices);
 	size_t pointListSize = 0;
 	
 	// ===== DEDUPLICATION PASS =====
@@ -681,23 +696,23 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// For guy.obj (24461 v): 17ms vs 700ms; for hp_portrait.obj (819352 v): 500ms vs force killed after 1 minute  
 	{
 		struct VertexHashSetNode {
-			Vertex* vertex;
-			VertexHashSetNode* next;
+			Vertex *vertex;
+			VertexHashSetNode *next;
 		};
 
 		// use a hash set to dedup vertices
 		size_t set_size = mesh->num_vertices;
-		VertexHashSetNode** set = (VertexHashSetNode**)calloc(set_size, sizeof(VertexHashSetNode*));
-		VertexHashSetNode* arena = (VertexHashSetNode*)calloc(mesh->num_vertices, sizeof(VertexHashSetNode));
-		VertexHashSetNode* arena_ptr = arena;
-		VertexHashSetNode* arena_end = arena + mesh->num_vertices;
+		VertexHashSetNode **set = (VertexHashSetNode**)calloc(set_size, sizeof(VertexHashSetNode*));
+		VertexHashSetNode *arena = (VertexHashSetNode*)calloc(mesh->num_vertices, sizeof(VertexHashSetNode));
+		VertexHashSetNode *arena_ptr = arena;
+		VertexHashSetNode *arena_end = arena + mesh->num_vertices;
 		if (set == nullptr) { fprintf(stderr, "Failed to malloc hash set in makeConvexHull\n"); free(pointList); return nullptr; }
 		for (int i = 0; i < mesh->num_vertices; i++) {
-			Vertex* v = &(mesh->vertices[i]);
+			Vertex *v = &(mesh->vertices[i]);
 			unsigned int hash = float3Hash(v->pos, __CONVEX_HULL_DEDUP_INV_EPS__);
 
 			// check if vertex is in set
-			VertexHashSetNode** ptr = &set[hash % set_size];
+			VertexHashSetNode **ptr = &set[hash % set_size];
 			bool found = false;
 			while (*ptr != NULL) {
 				if (equals3f((*ptr)->vertex->pos, v->pos, __CONVEX_HULL_DEDUP_EPS__)) {
@@ -730,13 +745,13 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	// list of facets used in convex hull, size may exceed cap and trigger realloc
 	size_t facetListSize = 0;
 	size_t facetListCap = maxi(4, mesh->num_faces);
-	Facet* facetList = (Facet*)malloc(sizeof(Facet) * facetListCap);
+	Facet *facetList = (Facet*)malloc(sizeof(Facet) * facetListCap);
 	if (!facetList) { fprintf(stderr, "Failed to malloc facetList in makeConvexHull\n"); free(pointList); return NULL; }
 
 	// map point index A, B to the unique facet with the directed edge A->B
 	// will not realloc
 	size_t ridgeMapSize = mesh->num_faces;
-	RidgeMapNode** ridgeMap = (RidgeMapNode**)calloc(ridgeMapSize, sizeof(RidgeMapNode*));
+	RidgeMapNode **ridgeMap = (RidgeMapNode**)calloc(ridgeMapSize, sizeof(RidgeMapNode*));
 	if (!ridgeMap) { fprintf(stderr, "Failed to malloc ridgeMap in makeConvexHull\n"); free(pointList); free(facetList); return NULL; }
 
 	// initial simplex:
@@ -842,7 +857,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	{
 		float distance;
 		float maxDist;
-		Facet* assignedFacet;
+		Facet *assignedFacet;
 		for (size_t i = 0; i < pointListSize; i++) {
 			if (i == p0 || i == p1 || i == p2 || i == p3) continue;
 			maxDist = 0.0f;
@@ -906,7 +921,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 				
 				// check B->A for the adjacent visibility
 				uint64_t hash = hash_pair(B, A);
-				RidgeMapNode** ptr = &(ridgeMap[hash % ridgeMapSize]);
+				RidgeMapNode **ptr = &(ridgeMap[hash % ridgeMapSize]);
 				while (*ptr != NULL && (*ptr)->key != hash) {
 					ptr = &((*ptr)->next);
 				}
@@ -929,7 +944,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 				// redistribute points
 				float distance;
 				float maxDist;
-				Facet* assignedFacet;
+				Facet *assignedFacet;
 				for (size_t k = 0; k < facetList[j].extPointListDA.length; k++) {
 					size_t test_point_index = facetList[j].extPointListDA.items[k];
 					if (test_point_index == p) continue; // dont reassign active point
@@ -977,7 +992,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 
 	// ===== BUILD MESH FROM CONVEX HULL =====
 	// now the convex hull is created, we stuff this in a mesh
-	Mesh* convexHull = (Mesh*)malloc(sizeof(Mesh));
+	Mesh *convexHull = (Mesh*)malloc(sizeof(Mesh));
 	initMesh(convexHull);
 	convexHull->hullId = -1;
 
@@ -994,9 +1009,9 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	size_t vertexIndex = 0;
 	for (int i = 0; i < facetListSize; i++) {
 		if (!facetList[i].isActive) continue;
-		Point* p0 = &pointList[facetList[i].points[0]];
-		Point* p1 = &pointList[facetList[i].points[1]];
-		Point* p2 = &pointList[facetList[i].points[2]];
+		Point *p0 = &pointList[facetList[i].points[0]];
+		Point *p1 = &pointList[facetList[i].points[1]];
+		Point *p2 = &pointList[facetList[i].points[2]];
 		if (!p0->assigned) {
 			// add p0
 			set3fv(convexHull->vertices[vertexIndex].pos, p0->pos);
@@ -1041,8 +1056,8 @@ Mesh* makeConvexHull(Mesh* mesh) {
 	}
 
 	for (int i = 0; i < ridgeMapSize; i++) {
-		RidgeMapNode* ptr = ridgeMap[i];
-		RidgeMapNode* next;
+		RidgeMapNode *ptr = ridgeMap[i];
+		RidgeMapNode *next;
 		while (ptr != NULL) {
 			next = ptr->next;
 			free(ptr);
@@ -1058,7 +1073,7 @@ Mesh* makeConvexHull(Mesh* mesh) {
 }
 
 // return index of mesh vertex farthest along T*dir
-unsigned int support(const Mesh* mesh, const float dir[3], const float T[9]) {
+unsigned int support(const Mesh *mesh, const float dir[3], const float T[9]) {
 	float local_dir[3];
 	matvec3(local_dir, T, dir);
 	float distance;
@@ -1075,14 +1090,15 @@ unsigned int support(const Mesh* mesh, const float dir[3], const float T[9]) {
 }
 
 // input: two mesh instances
-// output: true if mesh instances collide; false otherwise
-bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
+// output: simplex containing origin; not valid if no collision
+// returns: true if mesh instances collide; false otherwise
+bool GJK_intersect(MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex) {
 	// @NOTE: we shouldn't need the convex hull to do this computation... but it should help the speed
 	// @TODO: evaluate whether to assert the hull exists. maybe default to the mesh itself
 	if (!global_resource_pool.meshes[objectA->globalMeshId]->has_convex_hull) return false;
 	if (!global_resource_pool.meshes[objectB->globalMeshId]->has_convex_hull) return false;
-	Mesh* hullA = global_resource_pool.meshes[global_resource_pool.meshes[objectA->globalMeshId]->hullId];
-	Mesh* hullB = global_resource_pool.meshes[global_resource_pool.meshes[objectB->globalMeshId]->hullId];
+	Mesh *hullA = global_resource_pool.meshes[global_resource_pool.meshes[objectA->globalMeshId]->hullId];
+	Mesh *hullB = global_resource_pool.meshes[global_resource_pool.meshes[objectB->globalMeshId]->hullId];
 
 	float modelA[16];
 	float transformA[9];
@@ -1107,12 +1123,7 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 	mat4_mul(modelB, translate_temp, modelB);
 	set_model_tranpose_mat3(transformB, rotate_temp, objectB->scale);
 
-	struct Simplex { 
-		float points[4][3]; 
-		unsigned int length;
-	};
-
-	Simplex simplex    = {0};
+	memset(simplex, 0, sizeof(Simplex));
 	float dir[3]       = {1.0f, 0.0f, 0.0f};
 	float negdir[3]    = {0};
 	float supA[3]      = {0};
@@ -1142,11 +1153,11 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 	sub3f(point, supA, supB);
 
 	// simplex = {pA}
-	set3fv(simplex.points[0], point);
-	simplex.length = 1;
+	set3fv(simplex->points[0], point);
+	simplex->length = 1;
 
 	// dir = -pA
-	negate3f(dir, simplex.points[0]);
+	negate3f(dir, simplex->points[0]);
 
 	const int __MAX_ITER__ = 30;
 	int iter = 0;
@@ -1164,26 +1175,26 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 		}
 
 		// simplex = simplex union {pt}
-		set3fv(simplex.points[simplex.length], point);
-		unsigned int Aindex = simplex.length;
-		simplex.length++;
+		set3fv(simplex->points[simplex->length], point);
+		int Aindex = simplex->length;
+		simplex->length++;
 
 	    // if (update_simplex(&simplex, &direction))
 	    //     return true
-		switch(simplex.length) {
+		switch(simplex->length) {
 			case 1:
 				// 1 point; set new direction only; this logically should never be entered
-				negate3f(dir, simplex.points[Aindex]);
+				negate3f(dir, simplex->points[Aindex]);
 				break;
 			case 2: // @TODO: if we fail this check, would we have returned in the `no intersection` check anyways?
 				// 2 points; if B->A points in the direction of the origin
 				// Yes: simplex = {A};   dir = -A
 				// No:  simplex = {A,B}; dir = (AB x AO) x AB
-				negate3f(dir, simplex.points[Aindex]); // dir = -A
-				sub3f(AB, simplex.points[0], simplex.points[Aindex]);
+				negate3f(dir, simplex->points[Aindex]); // dir = -A
+				sub3f(AB, simplex->points[0], simplex->points[Aindex]);
 				if (dot3f(AB, dir) < 0) {
-					set3fv(simplex.points[0], simplex.points[Aindex]); // copy A into first element
-					simplex.length--;
+					set3fv(simplex->points[0], simplex->points[Aindex]); // copy A into first element
+					simplex->length--;
 				} else {
 					cross3f(ABcrossAO, AB, dir);
 					cross3f(dir, ABcrossAO, AB);
@@ -1193,9 +1204,9 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 				// 3 points; test if origin is outside AC or AB:
 				// Yes: reject opposite point; set dir = (A(kept) x AO) x A(kept)
 				// No:  keep simplex and set dir = normal (oriented towards O)
-				negate3f(AO, simplex.points[Aindex]);
-				sub3f(AB, simplex.points[0], simplex.points[Aindex]);
-				sub3f(AC, simplex.points[1], simplex.points[Aindex]);
+				negate3f(AO, simplex->points[Aindex]);
+				sub3f(AB, simplex->points[0], simplex->points[Aindex]);
+				sub3f(AC, simplex->points[1], simplex->points[Aindex]);
 				cross3f(normalABC, AB, AC);
 				cross3f(ABcrossAO, AB, AO);
 				cross3f(AOcrossAC, AO, AC);
@@ -1206,13 +1217,13 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 
 				if (dot3f(normalABC, ABcrossAO) < 0) {
 					// reject C
-					set3fv(simplex.points[1], simplex.points[Aindex]);
-					simplex.length--;
+					set3fv(simplex->points[1], simplex->points[Aindex]);
+					simplex->length--;
 					cross3f(dir, ABcrossAO, AB);
 				} else if (dot3f(normalABC, AOcrossAC) < 0) {
 					// reject B
-					set3fv(simplex.points[0], simplex.points[Aindex]);
-					simplex.length--;
+					set3fv(simplex->points[0], simplex->points[Aindex]);
+					simplex->length--;
 					cross3f(dir, AC, AOcrossAC);
 				} else {
 					set3fv(dir, normalABC);
@@ -1222,27 +1233,27 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 				// 4 points; test if origin is outside any facet:
 				// Yes: reject opposite point; set dir = normal of remaining facet pointing to origin
 				// No:  return true; origin is inside simplex thus we have a collision
-				negate3f(AO, simplex.points[Aindex]);
-				sub3f(AB, simplex.points[0], simplex.points[Aindex]);
-				sub3f(AC, simplex.points[1], simplex.points[Aindex]);
-				sub3f(AD, simplex.points[2], simplex.points[Aindex]);
+				negate3f(AO, simplex->points[Aindex]);
+				sub3f(AB, simplex->points[0], simplex->points[Aindex]);
+				sub3f(AC, simplex->points[1], simplex->points[Aindex]);
+				sub3f(AD, simplex->points[2], simplex->points[Aindex]);
 				cross3f(normalABC, AB, AC); if (dot3f(normalABC, AD) > 0.0f) { negate3f_inplace(normalABC); }
 				cross3f(normalABD, AB, AD); if (dot3f(normalABD, AC) > 0.0f) { negate3f_inplace(normalABD); }
 				cross3f(normalACD, AC, AD); if (dot3f(normalACD, AB) > 0.0f) { negate3f_inplace(normalACD); }
 				if (dot3f(normalABC, AO) > 0) {
 					// reject D
-					set3fv(simplex.points[2], simplex.points[Aindex]);
-					simplex.length--;
+					set3fv(simplex->points[2], simplex->points[Aindex]);
+					simplex->length--;
 					set3fv(dir, normalABC);
 				} else if (dot3f(normalABD, AO) > 0) {
 					// reject C
-					set3fv(simplex.points[1], simplex.points[Aindex]);
-					simplex.length--;
+					set3fv(simplex->points[1], simplex->points[Aindex]);
+					simplex->length--;
 					set3fv(dir, normalABD);
 				} else if (dot3f(normalACD, AO) > 0) {
 					// reject B
-					set3fv(simplex.points[0], simplex.points[Aindex]);
-					simplex.length--;
+					set3fv(simplex->points[0], simplex->points[Aindex]);
+					simplex->length--;
 					set3fv(dir, normalACD);
 				} else {
 					// intersection found
@@ -1250,7 +1261,7 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 				}
 				break;
 			default:
-				printf("Error: default in switch(simplex.length) in GJK_intersect on iteration %d with simplex.length=%u\n", iter, simplex.length);
+				printf("Error: default in switch(simplex->length) in GJK_intersect on iteration %d with simplex->length=%d\n", iter, simplex->length);
 		}
 		iter++;
 	}
@@ -1260,7 +1271,7 @@ bool GJK_intersect(MeshInstance* objectA, MeshInstance* objectB) {
 
 // ===== SHADER HANDLING =====
 // Compile the shader
-GLuint compileShader(GLenum type, const char* source) {
+GLuint compileShader(GLenum type, const char *source) {
     GLuint shader = glCreateShader(type);
     if (!shader) { fprintf(stderr, "Failed to create shader object\n"); return 0; }
 
@@ -1279,8 +1290,12 @@ GLuint compileShader(GLenum type, const char* source) {
     return shader;
 }
 
+void EPA_response(Simplex *simplex) {
+	return;
+}
+
 // compile and link vertex and fragment shaders into a full shader program
-GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource) {
+GLuint createShaderProgram(const char *vertexSource, const char *fragmentSource) {
     // compile shaders
     GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
     GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
@@ -1314,7 +1329,7 @@ GLuint createShaderProgram(const char* vertexSource, const char* fragmentSource)
 
 // @NOTE: during load time, think about we are structuring the data for runtime.
 //        each vertex is reusable, but the true uniqueness is (v, vt, vn).
-int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
+int malloc_mesh_fields_from_obj_file(const char *filename, Mesh *mesh) {
 	if (mesh->vertices != nullptr) { printf("mesh->vertices != nullptr in malloc_mesh_fields_from_obj_file\n"); return 0; }
 	
 	// container size
@@ -1358,26 +1373,26 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 			int C;
 		} key;   // triplet (vpos_index, vt_index, vn_index)
 		int val; // index into mesh->vertices list
-		VertexMapNode* next;
+		VertexMapNode *next;
 	};
 
 	// counts items in file
 	char buf[512];
-	FILE* file = fopen(filename, "r");
+	FILE *file = fopen(filename, "r");
 	if (file == NULL) { 
 		printf("FILE %s is NULL in malloc_mesh_fields_from_obj_file\n", filename);
 		return 0;
 	}
 
 	// temp storage for file data
-	Vec3f* obj_vertices = (Vec3f*)malloc(obj_vertices_capacity * sizeof(Vec3f));
-	Vec2f* obj_uvcoords = (Vec2f*)malloc(obj_uvcoords_capacity * sizeof(Vec2f));
-	Vec3f* obj_vnormals = (Vec3f*)malloc(obj_vnormals_capacity * sizeof(Vec3f));
-	FaceRef* obj_faces  = (FaceRef*)malloc(obj_faces_capacity * sizeof(FaceRef));
+	Vec3f *obj_vertices = (Vec3f*)malloc(obj_vertices_capacity * sizeof(Vec3f));
+	Vec2f *obj_uvcoords = (Vec2f*)malloc(obj_uvcoords_capacity * sizeof(Vec2f));
+	Vec3f *obj_vnormals = (Vec3f*)malloc(obj_vnormals_capacity * sizeof(Vec3f));
+	FaceRef *obj_faces  = (FaceRef*)malloc(obj_faces_capacity * sizeof(FaceRef));
 
 	bool errorCond = false;
 	int line_number = 0;
-	char* p = nullptr;
+	char *p = nullptr;
 	gl_timer read_timer = get_gl_timer();
 	while (fgets(buf, sizeof(buf), file) != NULL) {
 		line_number++;
@@ -1492,7 +1507,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 		}
 	}
 	fclose(file);
-	double time = gl_time(read_timer);
+	double time = gl_time(&read_timer);
 	printf("[read_timer=%.3f]...", time);
 
 	if (errorCond) {
@@ -1514,9 +1529,9 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 	// for each faceRef, hashmap each (vpos, vt, vn) --> (index in mesh->vertices)
 	// then assign face[i] indices to the result
 	int map_size = (obj_faces_size * 4); // load factor 0.75
-	VertexMapNode** map = (VertexMapNode**)calloc(map_size, sizeof(VertexMapNode*));
-	VertexMapNode* arena = (VertexMapNode*)malloc(3 * obj_faces_size * sizeof(VertexMapNode));
-	VertexMapNode* arena_ptr = arena;
+	VertexMapNode **map = (VertexMapNode**)calloc(map_size, sizeof(VertexMapNode*));
+	VertexMapNode *arena = (VertexMapNode*)malloc(3 * obj_faces_size * sizeof(VertexMapNode));
+	VertexMapNode *arena_ptr = arena;
 	int A, B, C;
 	unsigned long long hash;
 	int num_vertices = 0;
@@ -1528,7 +1543,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 
 			// find triplet in map
 			hash = hash_triplet(A,B,C);
-			VertexMapNode** ptr = &map[hash % map_size];
+			VertexMapNode **ptr = &map[hash % map_size];
 			while (*ptr != NULL && !((*ptr)->key.A == A && (*ptr)->key.B == B && (*ptr)->key.C == C)) {
 				ptr = &((*ptr)->next);
 			}
@@ -1578,7 +1593,7 @@ int malloc_mesh_fields_from_obj_file(const char* filename, Mesh* mesh) {
 }
 
 // assume textureFiles is an array of 6 filenames
-unsigned int loadCubemap(const char** textureFiles) {
+unsigned int loadCubemap(const char **textureFiles) {
 	unsigned int textureID;
 	glGenTextures(1, &textureID);
 	glBindTexture(GL_TEXTURE_CUBE_MAP, textureID);
@@ -1586,7 +1601,7 @@ unsigned int loadCubemap(const char** textureFiles) {
 	int width[6];
 	int height[6];
 	int nr[6];
-	unsigned char* cubemapFaceData[6];
+	unsigned char *cubemapFaceData[6];
 
 	#pragma omp parallel for
 	for (int i = 0; i < 6; i++) {
@@ -1614,8 +1629,8 @@ unsigned int loadCubemap(const char** textureFiles) {
 }
 
 // reads text file onto a new string
-char* mallocTextFromFile(const char* filename) {
-    FILE* file = fopen(filename, "r");
+char* mallocTextFromFile(const char *filename) {
+    FILE *file = fopen(filename, "r");
     if (!file) { fprintf(stderr, "Failed to open text file: %s\n", filename); return NULL; }
 
     // Seek to end to get file size
@@ -1624,7 +1639,7 @@ char* mallocTextFromFile(const char* filename) {
     rewind(file);
 
     // Allocate buffer (+1 for null terminator)
-    char* text = (char*)malloc(sizeof(char) * (length + 1));
+    char *text = (char*)malloc(sizeof(char) * (length + 1));
     if (!text) { fclose(file); fprintf(stderr, "Memory allocation failed in mallocTextFromFile\n"); return NULL; }
 
     // Read file into buffer
@@ -1637,9 +1652,9 @@ char* mallocTextFromFile(const char* filename) {
 
 // input filenames for vertex shader and fragment shader sources
 // output shader reference
-GLuint loadShader(const char* vertexShaderSourceFilename, const char* fragmentShaderSourceFilename) {
-	const char* vertexShaderSource = mallocTextFromFile(vertexShaderSourceFilename);
-	const char* fragmentShaderSource = mallocTextFromFile(fragmentShaderSourceFilename);
+GLuint loadShader(const char *vertexShaderSourceFilename, const char *fragmentShaderSourceFilename) {
+	const char *vertexShaderSource = mallocTextFromFile(vertexShaderSourceFilename);
+	const char *fragmentShaderSource = mallocTextFromFile(fragmentShaderSourceFilename);
     GLuint shaderProgram = 0;
 
     if (vertexShaderSource && fragmentShaderSource) {
@@ -1657,7 +1672,7 @@ GLuint loadShader(const char* vertexShaderSourceFilename, const char* fragmentSh
 
 // ==== REGISTER FUNCTIONS =====
 // register mesh instance
-int addMeshInstanceToGlobalScene(MeshInstance* meshInstance) { 
+int addMeshInstanceToGlobalScene(MeshInstance *meshInstance) { 
 	if (global_scene.meshInstanceCount != __MAX_MODELS__) {
 		global_scene.meshInstances[global_scene.meshInstanceCount] = meshInstance;
 		global_scene.meshInstanceCount++;
@@ -1666,21 +1681,21 @@ int addMeshInstanceToGlobalScene(MeshInstance* meshInstance) {
 }
 
 // register mesh; returns Id of registered mesh
-int addMeshToGlobalPool(Mesh* mesh) {
+int addMeshToGlobalPool(Mesh *mesh) {
 	if (global_resource_pool.meshCount != __MAX_MESHES__)
 		global_resource_pool.meshes[global_resource_pool.meshCount++] = mesh;
 	return global_resource_pool.meshCount - 1;
 }
 
 // register texture
-int addTextureToGlobalPool(Texture* texture) {
+int addTextureToGlobalPool(Texture *texture) {
 	if (global_resource_pool.textureCount != __MAX_TEXTURES__)
 		global_resource_pool.textures[global_resource_pool.textureCount++] = texture;
 	return global_resource_pool.textureCount - 1;
 }
 
 // register shader
-int addShaderToGlobalPool(Shader* shader) {
+int addShaderToGlobalPool(Shader *shader) {
 	if (global_resource_pool.shaderCount != __MAX_SHADERS__)
 		global_resource_pool.shaders[global_resource_pool.shaderCount++] = shader;
 	return global_resource_pool.shaderCount - 1;
@@ -1701,7 +1716,7 @@ void uploadMeshBuffers(const Mesh *mesh) {
 // swap between fps mode and normal mode
 // GLFW_CURSOR_DISABLED - disable cursor and center mouse like fps game
 // GLFW_CURSOR_NORMAL - normal cursor
-void swapCursorInputMode(GLFWwindow* window) {
+void swapCursorInputMode(GLFWwindow *window) {
 	MouseInfo *mouse = &(global_scene.mouse);
 	if (!mouse->canModeSwitch) return;
 
@@ -1718,8 +1733,8 @@ void swapCursorInputMode(GLFWwindow* window) {
 }
 
 // rotate camera by euler angles
-void rotateCamera(GLFWwindow* window, float yaw, float pitch) {
-	Camera* camera = &(global_scene.camera);
+void rotateCamera(GLFWwindow *window, float yaw, float pitch) {
+	Camera *camera = &(global_scene.camera);
 
 	camera->yaw += yaw;
 	camera->pitch += pitch;
@@ -1738,7 +1753,7 @@ void rotateCamera(GLFWwindow* window, float yaw, float pitch) {
 // ===== MAIN LOOP FUNCTIONS =====
 // trigger events based on inputs
 // @TODO: probably set flags here and process input events from mapping flags -> actions ? 
-void processInput(GLFWwindow* window, float deltaTime) {
+void processInput(GLFWwindow *window, float deltaTime) {
 	Camera *camera = &(global_scene.camera);
 	MouseInfo *mouse = &(global_scene.mouse);
     if(glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
@@ -1818,7 +1833,7 @@ void processInput(GLFWwindow* window, float deltaTime) {
 }
 
 // calculate deltaTime, FPS, etc
-void updateTime(Metrics* metrics) {
+void updateTime(Metrics *metrics) {
 	metrics->lastTime = metrics->currTime;
 	metrics->currTime = glfwGetTime();
 	metrics->deltaTime = metrics->currTime - metrics->lastTime;
@@ -1834,12 +1849,12 @@ void updateTime(Metrics* metrics) {
 }
 
 // physics for now
-void updateScene(GLFWwindow* window, float deltaTime) {
+void updateScene(GLFWwindow *window, float deltaTime) {
 	// handles collision detection
-	executeCollisionCheck();
+	executeCollisions();
 
 	// update position based on velocity vector
-	MeshInstance* active_instance;
+	MeshInstance *active_instance;
 	for (int i = 0; i < global_scene.meshInstanceCount; i++) { 
 		active_instance = global_scene.meshInstances[i];
 		if (!active_instance->physics) continue;
@@ -1868,7 +1883,7 @@ void updateScene(GLFWwindow* window, float deltaTime) {
 	quat_mult_inplace(active_instance->rotation, demoRotate);
 }
 
-void renderScene(GLFWwindow* window) {
+void renderScene(GLFWwindow *window) {
 	// @TODO: move the hardcoded values out somewhere
 	const float fovy = radiansf(60.0f);
 	const float near = 0.1f;
@@ -1914,9 +1929,9 @@ void renderScene(GLFWwindow* window) {
 
 	// Loop through the scene, build and upload the model matrix, then draw
 	for (int i = 0; i < global_scene.meshInstanceCount; i++) {
-		MeshInstance* meshInstance = global_scene.meshInstances[i];
+		MeshInstance *meshInstance = global_scene.meshInstances[i];
 		if (meshInstance == nullptr || meshInstance->globalMeshId < 0) continue;
-		Mesh* mesh = global_resource_pool.meshes[meshInstance->globalMeshId];
+		Mesh *mesh = global_resource_pool.meshes[meshInstance->globalMeshId];
 		if (mesh == nullptr) continue;
 		// Bind the VAO (restores all attribute and buffer settings)
 		glBindVertexArray(mesh->VAO);
@@ -1961,14 +1976,14 @@ void renderScene(GLFWwindow* window) {
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // wireframe for hulls
 		for (int i = 0; i < global_scene.meshInstanceCount; i++) {
 			// error checking
-			MeshInstance* meshInstance = global_scene.meshInstances[i];
+			MeshInstance *meshInstance = global_scene.meshInstances[i];
 			if (meshInstance == nullptr || meshInstance->globalMeshId < 0) continue;
-			Mesh* mesh = global_resource_pool.meshes[meshInstance->globalMeshId];
+			Mesh *mesh = global_resource_pool.meshes[meshInstance->globalMeshId];
 			if (!mesh->has_convex_hull) { printf("missing convex hull for mesh %d\n", meshInstance->globalMeshId); continue; } // mesh does not have a hull
 			if (!mesh->hullId == -1) { printf("meshInstance[%d] is directly referencing a hull!\n", i); continue; } // somehow a meshInstance is directly using a hull as it's mesh
 			
 			// get hull
-			Mesh* hull = global_resource_pool.meshes[mesh->hullId];
+			Mesh *hull = global_resource_pool.meshes[mesh->hullId];
 			if (hull->hullId != -1) { printf("mesh->hullId (%d) is not a hull!\n", mesh->hullId); continue; } // the hull mesh is not a hull
 
 			// Bind the VAO (restores all attribute and buffer settings)
@@ -2028,7 +2043,7 @@ void renderScene(GLFWwindow* window) {
 // ===== END MAIN LOOP FUNCTIONS =====
 
 // quick mesh instance default init
-void setDefaultMeshInstance(MeshInstance* meshInstance, const int resourceId) {
+void setDefaultMeshInstance(MeshInstance *meshInstance, const int resourceId) {
 	meshInstance->globalMeshId = resourceId;
 	meshInstance->globalTextureId = 0;
 	meshInstance->has_texture = false;
@@ -2050,7 +2065,7 @@ void setDefaultScene() {
 	// row 1 of each mesh
 	const float spacing = 10;
 	for (int i = 0; i < global_resource_pool.meshCount; i++) {
-		MeshInstance* meshInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
+		MeshInstance *meshInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
 		setDefaultMeshInstance(meshInstance, i);
 		set3f(meshInstance->pos, i*spacing, 0.0f, 0.0f);
 		meshInstance->physics = 2;
@@ -2060,10 +2075,10 @@ void setDefaultScene() {
 	// ===== texture testing =====
 	// setup liberty statue for demo
 	// @TODO: pipeline this
-	MeshInstance* liberty = global_scene.meshInstances[4];
+	MeshInstance *liberty = global_scene.meshInstances[4];
 	set3f(liberty->scale, 6.0f, 6.0f, 6.0f);
 
-	Texture* libertyTexture = (Texture*)malloc(sizeof(Texture));
+	Texture *libertyTexture = (Texture*)malloc(sizeof(Texture));
 	libertyTexture->textureID = 0;
 	unsigned int texture;
 	glGenTextures(1, &texture);
@@ -2074,7 +2089,8 @@ void setDefaultScene() {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
 	int textureWidth, textureHeight, nrChannels;
-	unsigned char *textureData = stbi_load("resources/texture/Liberty-GreenBronze-1.bmp", &textureWidth, &textureHeight, &nrChannels, 0);
+	const char *texture_filename = "resources/texture/Liberty-GreenBronze-1.bmp";
+	unsigned char *textureData = stbi_load(texture_filename, &textureWidth, &textureHeight, &nrChannels, 0);
 	if (textureData) {
 		GLenum format = (nrChannels == 4) ? GL_RGBA : GL_RGB;
 		glTexImage2D(GL_TEXTURE_2D, 0, format, textureWidth, textureHeight, 0, format, GL_UNSIGNED_BYTE, textureData);
@@ -2091,7 +2107,7 @@ void setDefaultScene() {
 
 	// teapots falling to floor
 	// floor
-	// MeshInstance* floorInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
+	// MeshInstance *floorInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
 	// floorInstance->globalMeshId = 1;
 	// set3f(floorInstance->pos, 0.0f, -20.0f, 0.0f);
 	// set3f(floorInstance->color, 0.1f, 0.1f, 0.1f);
@@ -2103,7 +2119,7 @@ void setDefaultScene() {
 	// // physics entities
 	// int num_teapots = 1 << 5;
 	// const float spacing = 10;
-	// MeshInstance* instancePool = (MeshInstance*)malloc(sizeof(MeshInstance) * num_teapots);
+	// MeshInstance *instancePool = (MeshInstance*)malloc(sizeof(MeshInstance) * num_teapots);
 	// for (int i = 0; i < num_teapots; i++) {
 	// 	setDefaultMeshInstance(&instancePool[i], 0);
 	// 	set3f(instancePool[i].pos, spacing*randf(), spacing*randf() + 50.0f, spacing*randf());
@@ -2141,40 +2157,40 @@ void initOpenGL() {
 }
 
 // default values for camera
-void initCamera(Camera& camera) {
-	set3f(camera.pos,   0.0f, 0.0f,  75.0f);
-	set3f(camera.front, 0.0f, 0.0f, -1.0f);
-	set3f(camera.up,    0.0f, 1.0f,  0.0f);
+void initCamera(Camera *camera) {
+	set3f(camera->pos,   0.0f, 0.0f,  75.0f);
+	set3f(camera->front, 0.0f, 0.0f, -1.0f);
+	set3f(camera->up,    0.0f, 1.0f,  0.0f);
 
-	camera.pitch = 0.0f;
-	camera.yaw = -90.0f;
-	camera.speed = 0.0f;
+	camera->pitch = 0.0f;
+	camera->yaw = -90.0f;
+	camera->speed = 0.0f;
 
-	camera.speed = 5.0f;
-	camera.TOP_MOVE_SPEED = 50.0f;
-	camera.NORMAL_MOVE_SPEED = 5.0f;
+	camera->speed = 5.0f;
+	camera->TOP_MOVE_SPEED = 50.0f;
+	camera->NORMAL_MOVE_SPEED = 5.0f;
 
-	camera.PAN_SPEED = 90.0f;
-	camera.TILT_SPEED = 45.0f;
+	camera->PAN_SPEED = 90.0f;
+	camera->TILT_SPEED = 45.0f;
 }
 
 // default values for light source
-void initLightSource(LightSource& lightSource) {
-	set3f(lightSource.pos, 0.0f, 0.0f, 0.0f);
-	set3f(lightSource.color, 1.0f, 1.0f, 1.0f);
+void initLightSource(LightSource *lightSource) {
+	set3f(lightSource->pos, 0.0f, 0.0f, 0.0f);
+	set3f(lightSource->color, 1.0f, 1.0f, 1.0f);
 }
 
 // default values for MouseInfo (part of global scene)
-void initMouseInfo(MouseInfo& mouse) { 
-	mouse.lastX = 400;
-	mouse.lastY = 300;
-	mouse.sensitivity = 0.1f;
-	mouse.firstMouse = true;
-	mouse.canModeSwitch = true;
+void initMouseInfo(MouseInfo *mouse) { 
+	mouse->lastX = 400;
+	mouse->lastY = 300;
+	mouse->sensitivity = 0.1f;
+	mouse->firstMouse = true;
+	mouse->canModeSwitch = true;
 }
 
 // default values for metrics
-void initMetrics(Metrics* metrics) {
+void initMetrics(Metrics *metrics) {
 	metrics->currTime = glfwGetTime();
 	metrics->heartBeat = 0.0f;
 	metrics->frameCount = 0;
@@ -2182,7 +2198,7 @@ void initMetrics(Metrics* metrics) {
 }
 
 // builds (no malloc) default mesh including VAO,VBO,EBO objects
-int initMesh(Mesh* mesh) {
+void initMesh(Mesh *mesh) {
 	// init values
 	mesh->vertices = nullptr;
 	mesh->faces = nullptr; 
@@ -2222,15 +2238,13 @@ int initMesh(Mesh* mesh) {
 
 	// Unbind this VAO
 	glBindVertexArray(0);
-
-	return 0;
 }
 
 // load, compile, malloc, register shaders to the global resource pool
 // for now this hardcodes the shaders with ID
 void initShaders() {
 	//////////////////////////////////////////////
-	// what are SHADERS? two types we can control:
+	// what are SHADERS? programs for the gpu. two types we can control:
 	// vertex shader: defines transformation on individual vertices (usually position)
 	// fragment: individual pixel information (position, color, etc) linearly interpolated from vertices
 	// fragment shader: defines transformation on individual fragments (usually color)
@@ -2238,15 +2252,13 @@ void initShaders() {
 	
 	unsigned int basicShader = loadShader("src/shaders/basicShader.vs", "src/shaders/basicShader.fs");
 	unsigned int skyboxShader = loadShader("src/shaders/skyboxShader.vs", "src/shaders/skyboxShader.fs");
-	if (basicShader == 0) { printf("basicShader==0 in initShaders\n"); }
-	if (basicShader == 1) { printf("skyboxShader==0 in initShaders\n"); }
 
 	// @TODO: learn how to pool these resources correctly
-	Shader* shader0 = (Shader*)calloc(1, sizeof(Shader));
+	Shader *shader0 = (Shader*)calloc(1, sizeof(Shader));
 	shader0->shaderID = basicShader;
 	addShaderToGlobalPool(shader0);
 
-	Shader* shader1 = (Shader*)calloc(1, sizeof(Shader));
+	Shader *shader1 = (Shader*)calloc(1, sizeof(Shader));
 	shader1->shaderID = skyboxShader;
 	addShaderToGlobalPool(shader1);
 
@@ -2262,10 +2274,10 @@ void initShaders() {
 // @TODO: Clean up; skybox loads from file can go to global pool; etc
 // NOTE: jpg/png loading is too slow. ~100ms per file. TGA increased file size which kept load times about the same.
 //       for now we just load the images in parallel for ~170ms total
-void initSkybox() {
+void initSkybox(Skybox *skybox) {
 	#define skybox_tga
 	#ifdef skybox_tga
-	const char* skyboxFiles[] = {
+	const char *skyboxFiles[] = {
 		"resources/skybox/skybox01/right.tga",
 		"resources/skybox/skybox01/left.tga",
 		"resources/skybox/skybox01/top.tga",
@@ -2275,7 +2287,7 @@ void initSkybox() {
 	};
 	#endif
 	#ifdef skybox_png
-	const char* skyboxFiles[] = {
+	const char *skyboxFiles[] = {
 		"resources/skybox/skybox01/right.png",
 		"resources/skybox/skybox01/left.png",
 		"resources/skybox/skybox01/top.png",
@@ -2285,7 +2297,7 @@ void initSkybox() {
 	};
 	#endif
 
-	global_scene.skybox.cubemapID = loadCubemap(skyboxFiles);
+	skybox->cubemapID = loadCubemap(skyboxFiles);
 
 	// @TODO: clean up this vertex initialization
 	const float skybox_vertices[108] = {
@@ -2336,16 +2348,16 @@ void initSkybox() {
 	// @TODO: this memcpy is activating the skybox to the scene
 	// 		  vs the init should just init data from file
 	//        I want to eventually select the active skybox in the loadScene() function
-	memcpy(global_scene.skybox.vertices, skybox_vertices, sizeof(skybox_vertices));
+	memcpy(skybox->vertices, skybox_vertices, sizeof(skybox_vertices));
 
 	// Generate objects
-	glGenVertexArrays(1, &(global_scene.skybox.VAO));
-	glGenBuffers(1, &(global_scene.skybox.VBO));
+	glGenVertexArrays(1, &(skybox->VAO));
+	glGenBuffers(1, &(skybox->VBO));
 
 	// Bind objects
-	glBindVertexArray(global_scene.skybox.VAO);
-	glBindBuffer(GL_ARRAY_BUFFER, global_scene.skybox.VBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(global_scene.skybox.vertices), &(global_scene.skybox.vertices), GL_STATIC_DRAW);
+	glBindVertexArray(skybox->VAO);
+	glBindBuffer(GL_ARRAY_BUFFER, skybox->VBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(skybox->vertices), &(skybox->vertices), GL_STATIC_DRAW);
 
 	// Configure vertex attributes
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*sizeof(float), (void*)0); // Position
@@ -2355,16 +2367,39 @@ void initSkybox() {
 	glBindVertexArray(0);
 }
 
-// @TODO: cleanup
+void initGlobalScene() {
+	initCamera(&global_scene.camera);
+	initLightSource(&global_scene.lightSource);
+	initMouseInfo(&global_scene.mouse);
+
+	gl_timer skybox_timer = get_gl_timer();
+	initSkybox(&global_scene.skybox);
+	gl_timer_println(&skybox_timer, "skybox load");
+
+	memset(global_scene.model, 0.0f, sizeof(global_scene.model));
+	memset(global_scene.view, 0.0f, sizeof(global_scene.view));
+	memset(global_scene.proj, 0.0f, sizeof(global_scene.proj));
+	memset(global_scene.projview, 0.0f, sizeof(global_scene.projview));
+	memset(global_scene.normal, 0.0f, sizeof(global_scene.normal));
+
+	global_scene.meshInstanceCount = 0;
+	global_scene.windowWidth = 0;
+	global_scene.windowHeight = 0;
+}
+
+void initGlobalResourcePool() {
+	global_resource_pool.meshCount = 0;
+	global_resource_pool.textureCount = 0;
+	global_resource_pool.shaderCount = 0;
+}
+
 // for each item in the hardcoded filename list:
 //     1. malloc+init a new mesh
 //     2. malloc mesh fields and load data from file
 //     3. register mesh to resource pool list
 //     4. upload mesh data to GPU buffers
 // return total count of meshes in resource pool
-int initGlobalResourcePoolMallocMeshAndMeshFields() {
-	global_resource_pool.meshCount = 0;
-	global_resource_pool.textureCount = 0;
+void initMeshes() {
 	const char *list_of_meshes[] = {
 		"resources/mesh/teapot.obj"
 		,"resources/mesh/box.obj"
@@ -2377,11 +2412,11 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 	};
 	const int vnormal_style = 1; // { 0 = flat | 1 = smooth }
 	
-	// @NOTE: I want to do something like Mesh* meshList = (Mesh*)malloc(sizeof(Mesh) * num_meshes); 
+	// @NOTE: I want to do something like Mesh *meshList = (Mesh*)malloc(sizeof(Mesh) * num_meshes); 
 	// this caused a bug because I'm trying to operate on elements of this array as if they were malloc'd individually
-	// in the future if I use a pool for this resource, just realloc directly on the global resource pool
 	
-	for (int i = 0; i < sizeof(list_of_meshes)/sizeof(list_of_meshes[0]); i++) {
+	const int num_meshes = sizeof(list_of_meshes)/sizeof(list_of_meshes[0]);
+	for (int i = 0; i < num_meshes; i++) {
 		Mesh* mesh = (Mesh*)malloc(sizeof(Mesh));
 		initMesh(mesh);
 		mesh->name = (char*)malloc(strlen(list_of_meshes[i]) + 1);
@@ -2390,7 +2425,6 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		tic();
 		if (!malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh)) { 
 			printf(" | ERROR: malloc_mesh_fields_from_obj_file returned 0 in initGlobalResourcePoolMallocMeshAndMeshFields for mesh %s\n", mesh->name);
-			free(mesh);
 			continue; 
 		}
 		printf("(%.3f ms)\n", toc());
@@ -2400,12 +2434,9 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 			tic();
 			if (vnormal_style == 0) {
 				printf(" flat normals...");
-				// realloc_mesh_with_face_vertices(mesh);
 				compute_vnormal_flat(mesh);
 			} else if (vnormal_style == 1) {
 				printf(" smooth normals...");
-				//int dupe_count = deduplicate_mesh_vertices(mesh, 5);
-				//printf("(dropped dupes: %d)...", dupe_count);
 				compute_vnormal_smooth(mesh);
 			} else {
 				printf(" | WARNING: vnormal_style not set. Unable to load normals.\n");
@@ -2420,15 +2451,10 @@ int initGlobalResourcePoolMallocMeshAndMeshFields() {
 		addMeshToGlobalPool(mesh);
 		uploadMeshBuffers(mesh);
 	}
-	return global_resource_pool.meshCount;
 }
 
-void initGlobalScene() {
-	initCamera(global_scene.camera);
-	initLightSource(global_scene.lightSource);
-	initMouseInfo(global_scene.mouse);
-	tic(); initSkybox(); printf("SKYBOX LOAD: %.3f ms\n", toc());
-	global_scene.meshInstanceCount = 0;
+void initTextures() {
+	// @TODO: move texture loading here
 }
 // ===== END INIT FUNCTIONS =====
 
@@ -2436,7 +2462,7 @@ void initGlobalScene() {
 // wrapper function for building convex hulls and adding to scene
 void executeConvexHulls() {
 	printf("executeConvexHulls:\n");
-	Mesh* hull;
+	Mesh *hull;
 	const int meshCountBeforeHulls = global_resource_pool.meshCount;
 	unsigned int hullId;
 	for (int i = 0; i < meshCountBeforeHulls; i++) {
@@ -2455,17 +2481,19 @@ void executeConvexHulls() {
 }
 
 // Orchestrate GJK intersection algorithm
-void executeCollisionCheck() {
+void executeCollisions() {
 	if (global_scene.meshInstanceCount < 2) return;
-	for (size_t i = 0; i < global_scene.meshInstanceCount; i++) {
+	for (int i = 0; i < global_scene.meshInstanceCount; i++) {
 		set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.5f, 0.0f);
 	}
-	for (size_t i = 0; i < global_scene.meshInstanceCount; i++) {
-		for (size_t j = i+1; j < global_scene.meshInstanceCount; j++) {
+	for (int i = 0; i < global_scene.meshInstanceCount; i++) {
+		for (int j = i + 1; j < global_scene.meshInstanceCount; j++) {
 			// @TODO: radius check to rule out pairs before trying GJK intersect
-			if (GJK_intersect(global_scene.meshInstances[i], global_scene.meshInstances[j])) {
+			Simplex simplex;
+			if (GJK_intersect(global_scene.meshInstances[i], global_scene.meshInstances[j], &simplex)) {
 				set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.0f, 0.0f);
 				set3f(global_scene.meshInstances[j]->hullColor, 1.0f, 0.0f, 0.0f);
+				EPA_response(&simplex);
 			}
 		}
 	}
@@ -2489,71 +2517,62 @@ void printGlobalResourcePool() {
 }
 // ===== END PRINT FUNCTIONS =====
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
 	srand(getSeed());
 
+	
 	// ========================= OPENGL SETUP =========================
+	gl_timer opengl_setup_timer = get_gl_timer();
 	// initialize glfw, glad, OpenGL
-	if (!glfwInit()) { fprintf(stderr, "Failed to initialize GLFW\n"); return -1; } // GLFW
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3); // OpenGL 3.x
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3); // OpenGL 3.3
-	GLFWwindow* window = glfwCreateWindow(1280, 720, "GLFW OpenGL", NULL, NULL); // window
+	if (!glfwInit()) { fprintf(stderr, "Failed to initialize GLFW\n"); return -1; }
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+	GLFWwindow *window = glfwCreateWindow(1280, 720, "GLFW OpenGL", NULL, NULL);
 	if (!window) { fprintf(stderr, "Failed to create GLFW window\n"); glfwTerminate(); return -1; }
 	glfwMakeContextCurrent(window);
-	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) { fprintf(stderr, "Failed to initialize GLAD\n"); return -1; } // GLAD
-	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback); // callback
-	
-	// custom init OpenGL state
+	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) { fprintf(stderr, "Failed to initialize GLAD\n"); return -1; }
+	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 	initOpenGL();
+	gl_timer_println(&opengl_setup_timer, "opengl setup");
 	// ========================= END OPENGL SETUP =========================
+	
 
-	// ========================= SETUP SCENE =========================
+
+	// ========================= SCENE SETUP =========================
 	gl_timer scene_setup_timer = get_gl_timer();
 	initGlobalScene();
-	// @TODO: load_resources_onto_pools();
-	initGlobalResourcePoolMallocMeshAndMeshFields();
-	//init_global_resources();
+	initGlobalResourcePool();
+	initMeshes();
+	initTextures();
 	initShaders();
 	setDefaultScene();
-	gl_time(scene_setup_timer);
-	printf("scene setup=[%.3f s]\n", scene_setup_timer.last_duration / 1000.0);
+	gl_timer_println(&scene_setup_timer, "scene setup");
 	// ========================= END SCENE SETUP =========================
 
 
-	// ================ Playground to test 3D algorithms before render loop ===================
+	
+	// ================ PREPROCESS ===================
+	// playground to run algorithms before render loop
 	gl_timer convex_hull_timer = get_gl_timer();
 	executeConvexHulls();
-	gl_time(convex_hull_timer);
-	printf("convex hull=[%.3f s]\n", convex_hull_timer.last_duration / 1000.0);
-
-	printf("Begin render loop\n");
-	// ================ end playground ================
+	gl_timer_println(&convex_hull_timer, "convex hull");
+	// ================ END PREPROCESS ================
 
 
+
+	// ================ RENDER LOOP ===================
 	Metrics metrics;
 	initMetrics(&metrics);
-
 	char title[256]; // window title
-    const char* glVersion = (const char*)glGetString(GL_VERSION); // driver info
-    const char* glRenderer = (const char*)glGetString(GL_RENDERER); // gpu info
-
+    const char *glVersion = (const char*)glGetString(GL_VERSION); // driver info
+    const char *glRenderer = (const char*)glGetString(GL_RENDERER); // gpu info
+	printf("Begin render loop\n");
 	while (!glfwWindowShouldClose(window)) {
-		// Update the time
 		updateTime(&metrics);
-
-		// Handle input
 		processInput(window, metrics.deltaTime);
-
-		// @TODO: separate systems? i.e. updatePhysics(), updateAnim(), ...
-		updateScene(window, metrics.deltaTime);
-
-		// Render the global scene to the back buffer
+		updateScene(window, metrics.deltaTime); // @TODO: separate systems? i.e. updatePhysics(), updateAnim(), ...
 		renderScene(window);
-
-		// Swap buffers
 		glfwSwapBuffers(window);
-
-		// Get new inputs
 		glfwPollEvents();
  
 		// run this every ~1 second
@@ -2562,14 +2581,20 @@ int main(int argc, char** argv) {
 			glfwSetWindowTitle(window, title);
 			metrics.heartBeat = 0.0f;
 		}
-	} // end main render loop
+	}
+	// ================ END RENDER LOOP ===================
 
-	// memory cleanup
+	
+	
+	// ================ CLEANUP ===================
+	gl_timer cleanup_timer = get_gl_timer();
 	free_scene(&global_scene);
 	free_resource_pool(&global_resource_pool);
-
     glfwDestroyWindow(window);
-    glfwTerminate();
+	gl_timer_println(&cleanup_timer, "cleanup");
+	// ================ END CLEANUP ===================
+
+	glfwTerminate();
     return 0;
 }
  
