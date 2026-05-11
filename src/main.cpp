@@ -34,7 +34,13 @@ struct LightSource;
 struct Scene;
 struct ResourcePool;
 struct Metrics;
+
+// lifted structs
+struct ListInt;
+struct MapNode_u64_to_u32;
+struct Point;
 struct Simplex;
+struct Facet;
 
 // custom initializers
 // @TODO: sort the initializers here
@@ -59,10 +65,11 @@ int compute_vnormal_smooth(Mesh *mesh);
 int deduplicate_mesh_vertices(Mesh *mesh, const int tol);
 int realloc_mesh_with_face_vertices(Mesh *mesh);
 int compute_vnormal_flat(Mesh *mesh);
+void init_facet_with_point_list(Facet *facet, Point *pointList, int indexA, int indexB, int indexC, float pInterior[3]);
 Mesh* makeConvexHull(Mesh *mesh);
-unsigned int support(Mesh *mesh, float dir[3]);
+int support(const Mesh *mesh, const float dir[3], const float transform[9]);
 bool GJK_intersect(MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex);
-void EPA_response(Simplex *simplex);
+void EPA_response(float penVector[3], MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex);
 
 // shader handling
 GLuint compileShader(GLenum type, const char *source);
@@ -185,8 +192,8 @@ struct Skybox {
 
 // MeshInstance is a world model which references a mesh and a texture
 struct MeshInstance {
-	unsigned int globalMeshId;
-	unsigned int globalTextureId;
+	int globalMeshId;
+	int globalTextureId;
 	bool has_texture;
 	float pos[3];
 	float scale[3];
@@ -299,9 +306,40 @@ struct Metrics {
 	float fps;
 };
 
+struct ListInt {
+	int *items;
+	size_t length;
+	size_t capacity;
+};
+
+struct MapNode_u64_to_u32 {
+	uint64_t key; 
+	uint32_t val;
+	MapNode_u64_to_u32 *next;
+};
+
+struct Point {
+	float pos[3];
+	int vertexIndex; // index of this point into a vertex list
+	bool assigned;   // if vertexIndex is assigned yet in convex hull
+};
+
+// up to n+1 points
 struct Simplex { 
 	float points[4][3];
 	int length;
+};
+
+// A facet is an n-1 dimensional face of an n-simplex. In 3D this is a triangle.
+struct Facet {
+	unsigned int points[3]; // index in a list of points
+	float normal[3]; // normal facing outward
+	float offset; // plane = { x : n dot x = d }; d is the offset
+
+	bool isNew; // this facet was newly created in the main loop
+	bool isVisible; // visible facets are marked for deletion
+	bool isActive; // instead of deleting, just mark as inactive
+	ListInt extPointListDA; // dynamic list of exterior point indices
 };
 
 #pragma endregion STRUCTDEF 
@@ -466,11 +504,11 @@ int compute_vnormal_smooth(Mesh *mesh) {
 }
 
 // @TODO: reivew this after new obj loader
-// deduplicate a mesh's vertex list on position with tolerance of 1e-(tol)
 // @TODO: some vertices are already used by many different faces and this will still check those anyways
 //        which results in a very large number of unnecessary checks. can we eliminate that behavior?
 // @NOTE: deduplication helps with smooth shading, but in the end especially with texture uv coords we will still need
 //        to use face-vertices on gpu. Time spent improving this is probably not productive.
+// deduplicate a mesh's vertex list on position with tolerance of 1e-(tol)
 // returns -1 on error or num of duplicates dropped on success
 int deduplicate_mesh_vertices(Mesh *mesh, const int tol) {
 	struct HashNode {
@@ -560,6 +598,37 @@ int realloc_mesh_with_face_vertices(Mesh *mesh) {
 	return 0;
 }
 
+// set a facet with indices into a point list
+// set the normal and use an interior point to correct the winding order
+// init the rest of the facet
+// expects extPointListDA is uninitialized
+void init_facet_with_point_list(Facet *facet, Point *pointList, int indexA, int indexB, int indexC, float pInterior[3]) {
+	float interiorToA[3];
+	set3u(facet->points, indexA, indexB, indexC);
+	set_triangle_normal(facet->normal, pointList[indexA].pos, pointList[indexB].pos, pointList[indexC].pos);
+	sub3f(interiorToA, pointList[indexA].pos, pInterior);
+	if (dot3f(facet->normal, interiorToA) < 0.0f) {
+		negate3f_inplace(facet->normal);
+		facet->points[1] = indexC;
+		facet->points[2] = indexB;
+	}
+	facet->offset = dot3f(facet->normal, pointList[indexA].pos);
+	facet->isNew = true;
+	facet->isVisible = false;
+	facet->isActive = false;
+	facet->extPointListDA = { NULL, 0, 0 }; // this will leak
+}
+
+// lifted from macro
+void append_listint(ListInt *list, int item) {
+	if (list->length >= list->capacity) {
+		list->capacity = list->capacity == 0 ? 256 : list->capacity * 2;
+		list->items = (int*)realloc(list->items, list->capacity * sizeof(int*));
+	}
+	list->items[list->length] = item;
+	list->length++;
+}
+
 // @TODO: review this after new obj loader
 // Compute vnormals for flat shading. Each vertex of a face uses the face's normal.
 // @NOTE: assuming CCW face orientation, faces are triangles, vertex list is face-vertex
@@ -605,87 +674,15 @@ int compute_vnormal_flat(Mesh *mesh) {
 Mesh* makeConvexHull(Mesh *mesh) {
 	const float __CONVEX_HULL_DEDUP_EPS__     = 1e-6f;
 	const int   __CONVEX_HULL_DEDUP_INV_EPS__ = 1e6;
-	// smaller vertex for algorithm
-	struct Point {
-		float pos[3];
-		unsigned int vertexIndex; // index of this point into the output vertex list
-		bool assigned; // if vertexIndex is assigned yet
-	};
-
-	// Dynamic array of uint
-	struct IndexList {
-		unsigned int *items;
-		size_t length;
-		size_t capacity;
-	};
-	
-	// the literature calls these facets but they are just faces
-	struct Facet {
-		unsigned int points[3]; // index in a list of points
-		float normal[3]; // normal facing outward
-		float offset; // plane = { x : n dot x = d }; d is the offset
-
-		bool isNew; // this facet was newly created in the main loop
-		bool isVisible; // visible facets are marked for deletion
-		bool isActive; // instead of deleting, just mark as inactive
-		IndexList extPointListDA; // dynamic list of exterior point indices
-	};
-
-	// This map is used to lookup the unique active facet containing the oriented ridge.
-	// A ridge is an edge between two points. Oriented means we are ordering them such that A(first) and B(second) give A->B in the CCW orientation of the facet using it.
-	// The key is the hash value for the two points A,B and represents the ridge.
-	// The val is the index in facetList of the unique active facet containing this oriented ridge.
-	struct RidgeMapNode {
-		uint64_t key; // we use the hash as the key since the hash function is a bijection
-		uint32_t val;
-		RidgeMapNode *next;
-	};
-
-	// NOTE: Using macro helpers so I can avoid lifting struct definitions out of this function.
-	//       All of these macros are undefined at the end of this function
-
-	// Initialize a new facet on the facetList. Does NOT check out of bounds.
-	#define new_facet(fList, fListIndex, indexA, indexB, indexC, pInterior) do {\
-		float interiorToA[3];\
-		Facet *currentFacet = &fList[(fListIndex)];\
-		set3u(currentFacet->points, (indexA), (indexB), (indexC));\
-		set_triangle_normal(currentFacet->normal, pointList[(indexA)].pos, pointList[(indexB)].pos, pointList[(indexC)].pos);\
-		/* if normal . (A - centroid) < 0, then our normal points inward so reorient the triangle */\
-		sub3f(interiorToA, pointList[(indexA)].pos, (pInterior).pos);\
-		if (dot3f(currentFacet->normal, interiorToA) < 0.0f) {\
-			negate3f_inplace(currentFacet->normal);\
-			currentFacet->points[1] = (indexC);\
-			currentFacet->points[2] = (indexB);\
-		}\
-		currentFacet->offset = dot3f(currentFacet->normal, pointList[(indexA)].pos);\
-		currentFacet->isNew = true;\
-		currentFacet->isVisible = false;\
-		currentFacet->isActive = false;\
-		currentFacet->extPointListDA = { NULL, 0, 0 };\
-		facetListSize++;\
-	} while (0)
-
-	// insert into the ridge map with calloc
-	#define insert_ridge_map(map, map_size, new_key, new_val) do {\
-		RidgeMapNode **ptr = &(map[(new_key) % (map_size)]);\
-		while (*ptr != NULL && (*ptr)->key != (new_key)) {\
-			ptr = &((*ptr)->next);\
-		}\
-		if (*ptr == NULL) {\
-			*ptr = (RidgeMapNode*)calloc(1, sizeof(RidgeMapNode));\
-		}\
-		(*ptr)->key = (new_key);\
-		(*ptr)->val = (new_val);\
-	} while (0)
 
 	// append to the IndexList dynamic array with realloc
-	#define da_append(list, item) do {\
-		if (list.length >= list.capacity) {\
-			list.capacity = list.capacity == 0 ? 256 : list.capacity * 2;\
-			list.items = (decltype(list.items))realloc(list.items, list.capacity * sizeof(*list.items));\
-		}\
-		list.items[list.length++] = item;\
-	} while (0)
+	// #define da_append(list, item) do {\
+	// 	if (list.length >= list.capacity) {\
+	// 		list.capacity = list.capacity == 0 ? 256 : list.capacity * 2;\
+	// 		list.items = (decltype(list.items))realloc(list.items, list.capacity * sizeof(*list.items));\
+	// 	}\
+	// 	list.items[list.length++] = item;\
+	// } while (0)
 
 	// convexHull guaranteed to have size <= current size so we prealloc here and resize at the end
 	Point *pointList = (Point*)malloc(sizeof(Point) * mesh->num_vertices);
@@ -693,7 +690,8 @@ Mesh* makeConvexHull(Mesh *mesh) {
 	
 	// ===== DEDUPLICATION PASS =====
 	// benchmark demonstrated significant speedup using map over O(n^2).
-	// For guy.obj (24461 v): 17ms vs 700ms; for hp_portrait.obj (819352 v): 500ms vs force killed after 1 minute  
+	// For guy.obj (24461 v): 17ms vs 700ms; for hp_portrait.obj (819352 v): 500ms vs force killed after 1 minute 
+	// @TODO: benchmark if a dedup pass is worth it
 	{
 		struct VertexHashSetNode {
 			Vertex *vertex;
@@ -708,6 +706,12 @@ Mesh* makeConvexHull(Mesh *mesh) {
 		VertexHashSetNode *arena_end = arena + mesh->num_vertices;
 		if (set == nullptr) { fprintf(stderr, "Failed to malloc hash set in makeConvexHull\n"); free(pointList); return nullptr; }
 		for (int i = 0; i < mesh->num_vertices; i++) {
+
+			// set3fv(pointList[i].pos, mesh->vertices[i].pos);
+			// pointList[i].assigned = false;
+			// pointListSize++;
+			// continue;
+
 			Vertex *v = &(mesh->vertices[i]);
 			unsigned int hash = float3Hash(v->pos, __CONVEX_HULL_DEDUP_INV_EPS__);
 
@@ -748,12 +752,22 @@ Mesh* makeConvexHull(Mesh *mesh) {
 	Facet *facetList = (Facet*)malloc(sizeof(Facet) * facetListCap);
 	if (!facetList) { fprintf(stderr, "Failed to malloc facetList in makeConvexHull\n"); free(pointList); return NULL; }
 
+	// RidgeMap:
+	// This map is used to lookup the unique active facet containing the oriented ridge.
+	// A ridge is an edge between two points. Oriented means we are ordering them such that A(first) and B(second) give A->B in the CCW orientation of the facet using it.
+	// The key is the hash value for the two points A,B and represents the ridge. The hash value can be the key because the hash function is a bijection
+	// The val is the index in facetList of the unique active facet containing this oriented ridge.
+
 	// map point index A, B to the unique facet with the directed edge A->B
-	// will not realloc
 	size_t ridgeMapSize = mesh->num_faces;
-	RidgeMapNode **ridgeMap = (RidgeMapNode**)calloc(ridgeMapSize, sizeof(RidgeMapNode*));
+	MapNode_u64_to_u32 **ridgeMap = (MapNode_u64_to_u32**)calloc(ridgeMapSize, sizeof(MapNode_u64_to_u32*));
 	if (!ridgeMap) { fprintf(stderr, "Failed to malloc ridgeMap in makeConvexHull\n"); free(pointList); free(facetList); return NULL; }
 
+	// @TODO: use arena memory allocation, possibly chaining arena as chunks for dynamic resizing
+	//size_t ridgeMapArenaSize = mesh->num_faces;
+	//MapNode_u64_to_u32 *ridgeMapArena = (MapNode_u64_to_u32*)malloc(ridgeMapArenaSize * sizeof(MapNode_u64_to_u32));
+	//MapNode_u64_to_u32 *ridgeMapArenaPtr = ridgeMapArena;
+	
 	// initial simplex:
 	// p0, p1 are min/max of one dimension
 	// p2 is argmax distance from p1p2 segment
@@ -797,7 +811,7 @@ Mesh* makeConvexHull(Mesh *mesh) {
 	
 	// step 3: find point farthest in perpendicular distance from normal
 	// normal(p0p1p2) = normalize((p2 - p0) x (p1 - p0))
-	// distance(p, p0p1p2) = abs( (p2 - p0) . (normal) ) 
+	// distance(p, p0p1p2) = abs( (p2 - p0) . (normal) )
 	{
 		float maxDist = 0.0f;
 		float distance;
@@ -821,33 +835,40 @@ Mesh* makeConvexHull(Mesh *mesh) {
 		}
 	}
 
-	// Compute centroid to orient direction of normals away from center
-	Point centroid;
-	set3fv(centroid.pos, pointList[p0].pos);
-	add3f(centroid.pos, centroid.pos, pointList[p1].pos);
-	add3f(centroid.pos, centroid.pos, pointList[p2].pos);
-	add3f(centroid.pos, centroid.pos, pointList[p3].pos);
-	mult3f(centroid.pos, centroid.pos, 0.25f);
+	// Compute centroid(p0, p1, p2, p3) for future orientation of face normals away from the center
+	float centroid[3];
+	set3fv(centroid, pointList[p0].pos);
+	add3f(centroid, centroid, pointList[p1].pos);
+	add3f(centroid, centroid, pointList[p2].pos);
+	add3f(centroid, centroid, pointList[p3].pos);
+	mult3f(centroid, centroid, 0.25f);
 
 	// set initial faces for tetrahedron
-	// Note: Use macro function because we are defining the structs inside this function.
 	{
-		new_facet(facetList, facetListSize, p0, p1, p2, centroid);
-		new_facet(facetList, facetListSize, p0, p1, p3, centroid);
-		new_facet(facetList, facetListSize, p0, p2, p3, centroid);
-		new_facet(facetList, facetListSize, p1, p2, p3, centroid);
+		init_facet_with_point_list(&facetList[facetListSize++], pointList, p0, p1, p2, centroid);
+		init_facet_with_point_list(&facetList[facetListSize++], pointList, p0, p1, p3, centroid);
+		init_facet_with_point_list(&facetList[facetListSize++], pointList, p0, p2, p3, centroid);
+		init_facet_with_point_list(&facetList[facetListSize++], pointList, p1, p2, p3, centroid);
 
 		// insert ridges into ridge map
-		// @TODO: roll into loop k=[0,1,2], use arena for ridge map, get rid of macro
+		uint64_t hash;
 		for (int i = 0; i < 4; i++) {
-			uint64_t hash[3];
-			hash[0] = hash_pair(facetList[i].points[0], facetList[i].points[1]);
-			hash[1] = hash_pair(facetList[i].points[1], facetList[i].points[2]);
-			hash[2] = hash_pair(facetList[i].points[2], facetList[i].points[0]);
-			insert_ridge_map(ridgeMap, ridgeMapSize, hash[0], i);
-			insert_ridge_map(ridgeMap, ridgeMapSize, hash[1], i);
-			insert_ridge_map(ridgeMap, ridgeMapSize, hash[2], i);
+			for (int j = 0; j < 3; j++) {
+				hash = hash_pair(facetList[i].points[j], facetList[i].points[(j + 1) % 3]);
 
+				// insert_ridge_map(ridgeMap, ridgeMapSize, hash, i);
+				MapNode_u64_to_u32 **ptr = &(ridgeMap[hash % ridgeMapSize]);
+				while (*ptr != NULL && (*ptr)->key != hash) {
+					ptr = &((*ptr)->next);
+				}
+				if (*ptr == NULL) {
+					*ptr = (MapNode_u64_to_u32*)malloc(sizeof(MapNode_u64_to_u32));
+					//*ptr = ridgeMapArenaPtr++;
+					(*ptr)->next = NULL;
+				}
+				(*ptr)->key = hash;
+				(*ptr)->val = i;
+			}
 			facetList[i].isNew = false;
 			facetList[i].isActive = true;
 		}
@@ -871,7 +892,7 @@ Mesh* makeConvexHull(Mesh *mesh) {
 			}
 			// assign the point
 			if (assignedFacet != nullptr) {
-				da_append(assignedFacet->extPointListDA, i);
+				append_listint(&assignedFacet->extPointListDA, i);
 			}
 		}
 	}
@@ -912,7 +933,7 @@ Mesh* makeConvexHull(Mesh *mesh) {
 		//     If adjacent facet across ridge is not visible, then this is a horizon edge
 		//     NOTE: orientation of ridge reverses; facet1 with (A->B) ==> facet2 with (B->A)
 		// For all horizon edges (points A, B): Form new facet (A, B, P) with corrected orientation
-		IndexList newFacetIndices = {NULL, 0, 0};
+		ListInt newFacetIndices = {NULL, 0, 0};
 		for (size_t j = 0; j < facetListSize; j++) {
 			if (!facetList[j].isActive || !facetList[j].isVisible || facetList[j].isNew) continue;
 			for (int k = 0; k < 3; k++) {
@@ -921,18 +942,18 @@ Mesh* makeConvexHull(Mesh *mesh) {
 				
 				// check B->A for the adjacent visibility
 				uint64_t hash = hash_pair(B, A);
-				RidgeMapNode **ptr = &(ridgeMap[hash % ridgeMapSize]);
+				MapNode_u64_to_u32 **ptr = &(ridgeMap[hash % ridgeMapSize]);
 				while (*ptr != NULL && (*ptr)->key != hash) {
 					ptr = &((*ptr)->next);
 				}
 				if (*ptr == NULL) { printf("(CONVEX HULL): PANIC; RIDGE NOT FOUND: facetList[%zu].points[%u//%u]\n", j, B, A); continue; }
 				if (!facetList[(*ptr)->val].isVisible) {
-					da_append(newFacetIndices, facetListSize);
+					append_listint(&newFacetIndices, facetListSize);
 					if (facetListSize >= facetListCap) {
 						facetListCap *= 2;
 						facetList = (Facet*)realloc(facetList, facetListCap * sizeof(Facet));
 					}
-					new_facet(facetList, facetListSize, A, B, p, centroid);
+					init_facet_with_point_list(&facetList[facetListSize++], pointList, A, B, p, centroid);
 				}
 			}
 		}
@@ -960,7 +981,7 @@ Mesh* makeConvexHull(Mesh *mesh) {
 						}
 					}
 					if (assignedFacet != nullptr) {
-						da_append(assignedFacet->extPointListDA, test_point_index);
+						append_listint(&assignedFacet->extPointListDA, test_point_index);
 					}
 				}
 				// destroy the visible facet
@@ -975,13 +996,24 @@ Mesh* makeConvexHull(Mesh *mesh) {
 		// @TODO: roll into loop k=[0,1,2], use arena for ridge map, get rid of macro
 		for (size_t j = 0; j < facetListSize; j++) {
 			if (!facetList[j].isNew) continue;
-			uint64_t hash[3];
-			hash[0] = hash_pair(facetList[j].points[0], facetList[j].points[1]);
-			hash[1] = hash_pair(facetList[j].points[1], facetList[j].points[2]);
-			hash[2] = hash_pair(facetList[j].points[2], facetList[j].points[0]);
-			insert_ridge_map(ridgeMap, ridgeMapSize, hash[0], j);
-			insert_ridge_map(ridgeMap, ridgeMapSize, hash[1], j);
-			insert_ridge_map(ridgeMap, ridgeMapSize, hash[2], j);
+			uint64_t hash;
+			for (int k = 0; k < 3; k++) {
+				hash = hash_pair(facetList[j].points[k], facetList[j].points[(k+1)%3]);
+				
+				// insert_ridge_map(ridgeMap, ridgeMapSize, hash, j);
+				MapNode_u64_to_u32 **ptr = &(ridgeMap[hash % ridgeMapSize]);
+				while (*ptr != NULL && (*ptr)->key != hash) {
+					ptr = &((*ptr)->next);
+				}
+				if (*ptr == NULL) {
+					*ptr = (MapNode_u64_to_u32*)malloc(sizeof(MapNode_u64_to_u32));
+					//assert(ridgeMapArenaPtr < ridgeMapArena + ridgeMapArenaSize);
+					//*ptr = ridgeMapArenaPtr++;
+					(*ptr)->next = NULL;
+				}
+				(*ptr)->key = hash;
+				(*ptr)->val = j;
+			}
 			facetList[j].isNew = false;
 			facetList[j].isActive = true;
 		}
@@ -1044,10 +1076,6 @@ Mesh* makeConvexHull(Mesh *mesh) {
 	// ===== END MESH BUILDING =====
 
 	// ===== BEGIN CLEANUP =====
-	#undef da_append
-	#undef insert_ridge_map
-	#undef new_facet
-
 	for (int i = 0; i < facetListSize; i++) {
 		if (facetList[i].extPointListDA.items != NULL) {
 			free(facetList[i].extPointListDA.items);
@@ -1055,15 +1083,18 @@ Mesh* makeConvexHull(Mesh *mesh) {
 		}
 	}
 
+	int num_ridge_map_elems = 0;
 	for (int i = 0; i < ridgeMapSize; i++) {
-		RidgeMapNode *ptr = ridgeMap[i];
-		RidgeMapNode *next;
+		MapNode_u64_to_u32 *ptr = ridgeMap[i];
+		MapNode_u64_to_u32 *next;
 		while (ptr != NULL) {
 			next = ptr->next;
 			free(ptr);
+			num_ridge_map_elems++;
 			ptr = next;
 		}
 	}
+	printf("num_ridge_map_elems=%d | mesh->num_faces=%d || mesh->num_vertices=%d\n",num_ridge_map_elems, mesh->num_faces, mesh->num_vertices);
 	free(ridgeMap);
 	free(pointList);
 	free(facetList);
@@ -1072,13 +1103,13 @@ Mesh* makeConvexHull(Mesh *mesh) {
 	return convexHull;
 }
 
-// return index of mesh vertex farthest along T*dir
-unsigned int support(const Mesh *mesh, const float dir[3], const float T[9]) {
+// return index of mesh vertex farthest along transform*dir
+int support(const Mesh *mesh, const float dir[3], const float transform[9]) {
 	float local_dir[3];
-	matvec3(local_dir, T, dir);
+	matvec3(local_dir, transform, dir);
 	float distance;
 	float maxDist = dot3f(mesh->vertices[0].pos, local_dir);
-	unsigned int res = 0;
+	int res = 0;
 	for (size_t i = 1; i < mesh->num_vertices; i++) {
 		distance = dot3f(mesh->vertices[i].pos, local_dir);
 		if (distance > maxDist) { 
@@ -1093,8 +1124,7 @@ unsigned int support(const Mesh *mesh, const float dir[3], const float T[9]) {
 // output: simplex containing origin; not valid if no collision
 // returns: true if mesh instances collide; false otherwise
 bool GJK_intersect(MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex) {
-	// @NOTE: we shouldn't need the convex hull to do this computation... but it should help the speed
-	// @TODO: evaluate whether to assert the hull exists. maybe default to the mesh itself
+	// @NOTE: this can be done without a convex hull, but it's very expensive
 	if (!global_resource_pool.meshes[objectA->globalMeshId]->has_convex_hull) return false;
 	if (!global_resource_pool.meshes[objectB->globalMeshId]->has_convex_hull) return false;
 	Mesh *hullA = global_resource_pool.meshes[global_resource_pool.meshes[objectA->globalMeshId]->hullId];
@@ -1106,22 +1136,24 @@ bool GJK_intersect(MeshInstance *objectA, MeshInstance *objectB, Simplex *simple
 	float modelB[16];
 	float transformB[9];
 
-	float translate_temp[16];
-	float rotate_temp[16];
-	float scale_temp[16];
-	set_translate_mat(translate_temp, objectA->pos);
-	set_rotation_mat(rotate_temp, objectA->rotation);
-	set_scale_mat(scale_temp, objectA->scale);
-	mat4_mul(modelA, rotate_temp, scale_temp);
-	mat4_mul(modelA, translate_temp, modelA);
-	set_model_tranpose_mat3(transformA, rotate_temp, objectA->scale);
-	
-	set_translate_mat(translate_temp, objectB->pos);
-	set_rotation_mat(rotate_temp, objectB->rotation);
-	set_scale_mat(scale_temp, objectB->scale);
-	mat4_mul(modelB, rotate_temp, scale_temp);
-	mat4_mul(modelB, translate_temp, modelB);
-	set_model_tranpose_mat3(transformB, rotate_temp, objectB->scale);
+	{
+		float translate_temp[16];
+		float rotate_temp[16];
+		float scale_temp[16];
+		set_translate_mat(translate_temp, objectA->pos);
+		set_rotation_mat(rotate_temp, objectA->rotation);
+		set_scale_mat(scale_temp, objectA->scale);
+		mat4_mul(modelA, rotate_temp, scale_temp);
+		mat4_mul(modelA, translate_temp, modelA);
+		set_model_tranpose_mat3(transformA, rotate_temp, objectA->scale);
+		
+		set_translate_mat(translate_temp, objectB->pos);
+		set_rotation_mat(rotate_temp, objectB->rotation);
+		set_scale_mat(scale_temp, objectB->scale);
+		mat4_mul(modelB, rotate_temp, scale_temp);
+		mat4_mul(modelB, translate_temp, modelB);
+		set_model_tranpose_mat3(transformB, rotate_temp, objectB->scale);
+	}
 
 	memset(simplex, 0, sizeof(Simplex));
 	float dir[3]       = {1.0f, 0.0f, 0.0f};
@@ -1267,6 +1299,52 @@ bool GJK_intersect(MeshInstance *objectA, MeshInstance *objectB, Simplex *simple
 	}
 	return false; // max iter reached with no intersection found
 }
+
+void EPA_response(float penVector[3], MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex) {
+	return;
+	if (!global_resource_pool.meshes[objectA->globalMeshId]->has_convex_hull) return;
+	if (!global_resource_pool.meshes[objectB->globalMeshId]->has_convex_hull) return;
+	Mesh *hullA = global_resource_pool.meshes[global_resource_pool.meshes[objectA->globalMeshId]->hullId];
+	Mesh *hullB = global_resource_pool.meshes[global_resource_pool.meshes[objectB->globalMeshId]->hullId];
+	
+	float modelA[16];
+	float transformA[9];
+
+	float modelB[16];
+	float transformB[9];
+	
+	{
+		float translate_temp[16];
+		float rotate_temp[16];
+		float scale_temp[16];
+		set_translate_mat(translate_temp, objectA->pos);
+		set_rotation_mat(rotate_temp, objectA->rotation);
+		set_scale_mat(scale_temp, objectA->scale);
+		mat4_mul(modelA, rotate_temp, scale_temp);
+		mat4_mul(modelA, translate_temp, modelA);
+		set_model_tranpose_mat3(transformA, rotate_temp, objectA->scale);
+		
+		set_translate_mat(translate_temp, objectB->pos);
+		set_rotation_mat(rotate_temp, objectB->rotation);
+		set_scale_mat(scale_temp, objectB->scale);
+		mat4_mul(modelB, rotate_temp, scale_temp);
+		mat4_mul(modelB, translate_temp, modelB);
+		set_model_tranpose_mat3(transformB, rotate_temp, objectB->scale);
+	}
+
+	// int point_size = 0;
+	// int point_cap = 1024;
+	// EPA_Point *points = (EPA_Point*)malloc(point_cap*sizeof(EPA_Point));
+
+	// int face_size = 0;
+	// int face_cap = 1024;
+	// EPA_Face *faces = (EPA_Face*)malloc(face_cap*sizeof(EPA_Face));
+
+	// set3fv(points[0].pos, simplex->points[0]);
+	// set3fv(points[1].pos, simplex->points[1]);
+	// set3fv(points[2].pos, simplex->points[2]);
+	// set3fv(points[3].pos, simplex->points[3]);
+}
 // ===== END GEOMETRY FUNCTIONS =====
 
 // ===== SHADER HANDLING =====
@@ -1288,10 +1366,6 @@ GLuint compileShader(GLenum type, const char *source) {
         return 0;
     }
     return shader;
-}
-
-void EPA_response(Simplex *simplex) {
-	return;
 }
 
 // compile and link vertex and fragment shaders into a full shader program
@@ -2142,7 +2216,7 @@ void setDefaultScene() {
 }
 
 // ===== INIT FUNCTIONS =====
-// NOTE: resource allocation is NOT initialization
+// NOTE: this is intentionally not following RAII
 
 // initialize some OpenGL state
 void initOpenGL() {
@@ -2482,7 +2556,6 @@ void executeConvexHulls() {
 
 // Orchestrate GJK intersection algorithm
 void executeCollisions() {
-	if (global_scene.meshInstanceCount < 2) return;
 	for (int i = 0; i < global_scene.meshInstanceCount; i++) {
 		set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.5f, 0.0f);
 	}
@@ -2493,7 +2566,7 @@ void executeCollisions() {
 			if (GJK_intersect(global_scene.meshInstances[i], global_scene.meshInstances[j], &simplex)) {
 				set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.0f, 0.0f);
 				set3f(global_scene.meshInstances[j]->hullColor, 1.0f, 0.0f, 0.0f);
-				EPA_response(&simplex);
+				//EPA_response(&simplex);
 			}
 		}
 	}
