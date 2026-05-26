@@ -69,7 +69,7 @@ void init_facet_with_point_list(Facet *facet, Point *pointList, int indexA, int 
 Mesh* makeConvexHull(Mesh *mesh);
 int support(const Mesh *mesh, const float dir[3], const float transform[9]);
 bool GJK_intersect(MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex);
-void EPA_response(float penVector[3], MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex);
+void get_penetration_vector(float penVector[3], MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex);
 
 // shader handling
 GLuint compileShader(GLenum type, const char *source);
@@ -91,6 +91,7 @@ void uploadMeshBuffers(const Mesh *mesh);
 // ????
 void swapCursorInputMode(GLFWwindow *window);
 void rotateCamera(GLFWwindow *window, float yaw, float pitch);
+void append_listint(ListInt *list, int item);
 
 // main loop
 void processInput(GLFWwindow *window, float deltaTime);
@@ -340,6 +341,15 @@ struct Facet {
 	bool isVisible; // visible facets are marked for deletion
 	bool isActive; // instead of deleting, just mark as inactive
 	ListInt extPointListDA; // dynamic list of exterior point indices
+};
+
+// A ridge is an n-2 dimensional component of an n-simplex. In 3D this is an edge.
+struct Ridge {
+	int outIndex;
+	int inIndex;
+	int facetIndex;
+
+	bool isActive;
 };
 
 #pragma endregion STRUCTDEF 
@@ -672,27 +682,19 @@ int compute_vnormal_flat(Mesh *mesh) {
 // quickhull algorithm
 // @TODO: review memory allocation (move to arenas?), macro usage, general cleanup
 Mesh* makeConvexHull(Mesh *mesh) {
-	const float __CONVEX_HULL_DEDUP_EPS__     = 1e-6f;
-	const int   __CONVEX_HULL_DEDUP_INV_EPS__ = 1e6;
-
-	// append to the IndexList dynamic array with realloc
-	// #define da_append(list, item) do {\
-	// 	if (list.length >= list.capacity) {\
-	// 		list.capacity = list.capacity == 0 ? 256 : list.capacity * 2;\
-	// 		list.items = (decltype(list.items))realloc(list.items, list.capacity * sizeof(*list.items));\
-	// 	}\
-	// 	list.items[list.length++] = item;\
-	// } while (0)
 
 	// convexHull guaranteed to have size <= current size so we prealloc here and resize at the end
 	Point *pointList = (Point*)malloc(sizeof(Point) * mesh->num_vertices);
 	size_t pointListSize = 0;
 	
 	// ===== DEDUPLICATION PASS =====
-	// benchmark demonstrated significant speedup using map over O(n^2).
+	// we use a map for dedup instead of O(n^2) because a benchmark demonstrated significant speedup.
 	// For guy.obj (24461 v): 17ms vs 700ms; for hp_portrait.obj (819352 v): 500ms vs force killed after 1 minute 
-	// @TODO: benchmark if a dedup pass is worth it
+	// @NOTE: this dedup should probably be replaced with an index based dedup on the faces but it's good for now
 	{
+		const float __CONVEX_HULL_DEDUP_EPS__     = 1e-6f;
+		const int   __CONVEX_HULL_DEDUP_INV_EPS__ = 1e6;
+
 		struct VertexHashSetNode {
 			Vertex *vertex;
 			VertexHashSetNode *next;
@@ -706,11 +708,6 @@ Mesh* makeConvexHull(Mesh *mesh) {
 		VertexHashSetNode *arena_end = arena + mesh->num_vertices;
 		if (set == nullptr) { fprintf(stderr, "Failed to malloc hash set in makeConvexHull\n"); free(pointList); return nullptr; }
 		for (int i = 0; i < mesh->num_vertices; i++) {
-
-			// set3fv(pointList[i].pos, mesh->vertices[i].pos);
-			// pointList[i].assigned = false;
-			// pointListSize++;
-			// continue;
 
 			Vertex *v = &(mesh->vertices[i]);
 			unsigned int hash = float3Hash(v->pos, __CONVEX_HULL_DEDUP_INV_EPS__);
@@ -751,7 +748,6 @@ Mesh* makeConvexHull(Mesh *mesh) {
 	size_t facetListCap = maxi(4, mesh->num_faces);
 	Facet *facetList = (Facet*)malloc(sizeof(Facet) * facetListCap);
 	if (!facetList) { fprintf(stderr, "Failed to malloc facetList in makeConvexHull\n"); free(pointList); return NULL; }
-
 	// RidgeMap:
 	// This map is used to lookup the unique active facet containing the oriented ridge.
 	// A ridge is an edge between two points. Oriented means we are ordering them such that A(first) and B(second) give A->B in the CCW orientation of the facet using it.
@@ -992,7 +988,7 @@ Mesh* makeConvexHull(Mesh *mesh) {
 			}
 		}
 
-		// update ridge map
+		// update ridge map with edges of new faces
 		// @TODO: roll into loop k=[0,1,2], use arena for ridge map, get rid of macro
 		for (size_t j = 0; j < facetListSize; j++) {
 			if (!facetList[j].isNew) continue;
@@ -1300,8 +1296,12 @@ bool GJK_intersect(MeshInstance *objectA, MeshInstance *objectB, Simplex *simple
 	return false; // max iter reached with no intersection found
 }
 
-void EPA_response(float penVector[3], MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex) {
-	return;
+// Expanding Polytope Algorithm (EPA) expands the output simplex from the GJK collision algorithm to find the penetration vector
+// expansion is a greedy search for the nearest point to the origin on the boundary of the Minkowski difference of the two meshes
+// At each iteration, get the nearest face and call the support function in the direction of the nearest face's outward normal
+//   If the resulting point is within epsilon of the current nearest point, then this point is the penetration vector
+//   Otherwise, expand the object to this new point like with the quickhull algorithm.
+void get_penetration_vector(float penVector[3], MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex) {
 	if (!global_resource_pool.meshes[objectA->globalMeshId]->has_convex_hull) return;
 	if (!global_resource_pool.meshes[objectB->globalMeshId]->has_convex_hull) return;
 	Mesh *hullA = global_resource_pool.meshes[global_resource_pool.meshes[objectA->globalMeshId]->hullId];
@@ -1332,18 +1332,185 @@ void EPA_response(float penVector[3], MeshInstance *objectA, MeshInstance *objec
 		set_model_tranpose_mat3(transformB, rotate_temp, objectB->scale);
 	}
 
-	// int point_size = 0;
-	// int point_cap = 1024;
-	// EPA_Point *points = (EPA_Point*)malloc(point_cap*sizeof(EPA_Point));
+	// max iteration statically bounds the size
+	// I am deliberately doing linear search in a small array instead of using a hash table or sorting for now
 
-	// int face_size = 0;
-	// int face_cap = 1024;
-	// EPA_Face *faces = (EPA_Face*)malloc(face_cap*sizeof(EPA_Face));
+	const float EPS          = 1e-5;
+	const int MAX_ITER       = 32;
+	// const int MAX_VERTICES   = 4 + MAX_ITER;
+	// const int MAX_FACETS     = 4 + 2*MAX_ITER;
+	// const int MAX_RIDGES     = 6 + 3*MAX_ITER;
+	const int TOTAL_VERTICES = 64; // 4 + MAX_ITER; // true max 36
+	const int TOTAL_FACETS   = 2048; // MAX_ITER*MAX_ITER + 5*MAX_ITER; // true max 1184
+	const int TOTAL_RIDGES   = 2048; // 3*(MAX_ITER*(MAX_ITER+1))/2 + 6*MAX_ITER; // true max 1776
 
-	// set3fv(points[0].pos, simplex->points[0]);
-	// set3fv(points[1].pos, simplex->points[1]);
-	// set3fv(points[2].pos, simplex->points[2]);
-	// set3fv(points[3].pos, simplex->points[3]);
+	int pointListSize = 0;
+	int facetListSize = 0;
+	int ridgeListSize = 0;
+	Point pointList[TOTAL_VERTICES] = {0};
+	Facet facetList[TOTAL_FACETS]   = {0};
+	Ridge ridgeList[TOTAL_RIDGES]   = {0};
+
+	// init hull with initial tetrahedron
+	for (int i = 0; i < 4; i++) {
+		set3fv(pointList[i].pos, simplex->points[i]);
+	}
+	pointListSize = 4;
+
+	float centroid[3];
+	set3fv(centroid, pointList[0].pos);
+	add3f(centroid, centroid, pointList[1].pos);
+	add3f(centroid, centroid, pointList[2].pos);
+	add3f(centroid, centroid, pointList[3].pos);
+	mult3f(centroid, centroid, 0.25f);
+
+	init_facet_with_point_list(&facetList[0], pointList, 0, 1, 2, centroid);
+	init_facet_with_point_list(&facetList[1], pointList, 0, 1, 3, centroid);
+	init_facet_with_point_list(&facetList[2], pointList, 0, 2, 3, centroid);
+	init_facet_with_point_list(&facetList[3], pointList, 1, 2, 3, centroid);
+	facetListSize = 4;
+
+	for (int i = 0; i < 4; i++) {
+		for (int j = 0; j < 3; j++) {
+			ridgeList[ridgeListSize].inIndex = facetList[i].points[j];
+			ridgeList[ridgeListSize].outIndex = facetList[i].points[(j+1) % 3];
+			ridgeList[ridgeListSize].facetIndex = i;
+			ridgeList[ridgeListSize].isActive = true;
+			ridgeListSize++;
+		}
+		facetList[i].isNew = false;
+		facetList[i].isActive = true;
+	}
+
+	int iter         = 0;
+	int nearestFacet = 0;
+	float minOffset  = 0.0f;
+	float dir[3]     = {0};
+	float negdir[3]  = {0};
+	float supA[3]    = {0};
+	float supB[3]    = {0};
+	float point[3]   = {0};
+
+	while (iter < MAX_ITER) {
+
+		nearestFacet = -1;
+		minOffset = 1e10;
+		// STEP 1. find the nearest facet
+		//     nearest facet is the one which minimizes abs(offset)
+		for (int i = 0; i < facetListSize; i++) {
+			if (!facetList[i].isActive) continue;
+			if (facetList[i].offset < minOffset) {
+				nearestFacet = i;
+				minOffset = facetList[nearestFacet].offset;
+			}
+		}
+
+		// STEP 2. call support in the direction of the outward normal of the nearest facet
+		set3fv(dir, facetList[nearestFacet].normal);
+		negate3f(negdir, dir);
+		set3fv(supA, hullA->vertices[support(hullA, dir, transformA)].pos);
+		set3fv(supB, hullB->vertices[support(hullB, negdir, transformB)].pos);
+		matvec4_3fv_inplace(modelA, supA);
+		matvec4_3fv_inplace(modelB, supB);
+		sub3f(point, supA, supB);
+
+		// STEP 3. check for terminating condition
+		//   condition 1: point did not meaningfully improve the distance
+		//   condition 2: point is already part of the object
+		//   otherwise, keep running
+		if (dot3f(point, facetList[nearestFacet].normal) - facetList[nearestFacet].offset < EPS) {
+			//printf("breaking on distance not improved\n");
+			break;
+		}
+
+		bool duplicate = false;
+		for (int i = 0; i < pointListSize; i++) {
+			float diff[3];
+			sub3f(diff, point, pointList[i].pos);
+			if (dot3f(diff, diff) < EPS*EPS) {
+				duplicate = true;
+			}
+		}
+		if (duplicate) {
+			//printf("breaking on duplicate\n");
+			break;
+		}
+
+		// STEP 4. add new point, update shape
+		int p = pointListSize++;
+		set3fv(pointList[p].pos, point);
+		pointList[p].assigned = true;
+		pointList[p].vertexIndex = p;
+
+		// find and mark visible faces
+		for (int i = 0; i < facetListSize; i++) {
+			if (!facetList[i].isActive) continue;
+			if (dot3f(pointList[p].pos, facetList[i].normal) - facetList[i].offset > 0.0f) {
+				facetList[i].isVisible = true;
+			}
+		}
+
+		// horizon edge check and create new facets
+		// For each visible facet:
+		//   For each edge of facet:
+		//     If adjacent facet across ridge is not visible, then this is a horizon edge
+		//     NOTE: orientation of ridge reverses; facet1 with (A->B) ==> facet2 with (B->A)
+		// For all horizon edges (points A, B): Form new facet (A, B, P) with corrected orientation
+		for (int i = 0; i < facetListSize; i++) {
+			if (!facetList[i].isActive || !facetList[i].isVisible || facetList[i].isNew) continue;
+			for (int j = 0; j < 3; j++) {
+				int A = facetList[i].points[j];
+				int B = facetList[i].points[(j + 1) % 3];
+				
+				// if facet containing B->A is not visible, then add new facet using A->B
+				int ridgeIndex = -1;
+				for (int k = 0; k < ridgeListSize; k++) {
+					if (ridgeList[k].isActive && ridgeList[k].inIndex == B && ridgeList[k].outIndex == A) {
+						ridgeIndex = k;
+						if (!facetList[ridgeList[ridgeIndex].facetIndex].isVisible) {
+							init_facet_with_point_list(&facetList[facetListSize++], pointList, A, B, p, centroid);
+						}
+						break;
+					}
+				}
+				if (ridgeIndex == -1) { printf("(get_penetration_vector): PANIC; RIDGE NOT FOUND: facetList[%d].points[%d//%d]\n", i, B, A); exit(-1); continue; }
+			}
+		}
+
+		// delete visible faces
+		for (int i = 0; i < facetListSize; i++) {
+			if (facetList[i].isActive && facetList[i].isVisible) {
+				facetList[i].isActive = false;
+				facetList[i].isVisible = false;
+			}
+		}
+
+		// delete old ridges
+		for (int i = 0; i < ridgeListSize; i++) {
+			if (ridgeList[i].isActive && !facetList[ridgeList[i].facetIndex].isActive) {
+				ridgeList[i].isActive = false;
+			}
+		}
+
+		// add new ridges to end of ridgeList and mark new facets active
+		for (int i = 0; i < facetListSize; i++) {
+			if (!facetList[i].isNew) continue;
+			for (int j = 0; j < 3; j++) {
+				ridgeList[ridgeListSize].inIndex = facetList[i].points[j];
+				ridgeList[ridgeListSize].outIndex = facetList[i].points[(j+1) % 3];
+				ridgeList[ridgeListSize].facetIndex = i;
+				ridgeList[ridgeListSize].isActive = true;
+				ridgeListSize++;
+			}
+			facetList[i].isNew = false;
+			facetList[i].isActive = true;
+		}
+
+		iter++;
+	}
+
+	// return penetration vector (@TODO: normalized + depth or non-normalized?)
+	mult3f(penVector, facetList[nearestFacet].normal, facetList[nearestFacet].offset);
 }
 // ===== END GEOMETRY FUNCTIONS =====
 
@@ -2563,10 +2730,29 @@ void executeCollisions() {
 		for (int j = i + 1; j < global_scene.meshInstanceCount; j++) {
 			// @TODO: radius check to rule out pairs before trying GJK intersect
 			Simplex simplex;
+			float penVector[3] = {0};
 			if (GJK_intersect(global_scene.meshInstances[i], global_scene.meshInstances[j], &simplex)) {
 				set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.0f, 0.0f);
 				set3f(global_scene.meshInstances[j]->hullColor, 1.0f, 0.0f, 0.0f);
-				//EPA_response(&simplex);
+				get_penetration_vector(penVector, global_scene.meshInstances[i], global_scene.meshInstances[j], &simplex);
+				
+				// @TEMP: handle collision response here
+				float deltaA[3];
+				float deltaB[3];
+					set3fv(deltaB, penVector);
+					negate3f(deltaA, deltaB);
+				if (i == 0) {
+					mult3f(deltaA, deltaA, 0.0f);
+					mult3f(deltaB, deltaB, 1.0f);
+				} else {
+					mult3f(deltaA, deltaA, 0.5f);
+					mult3f(deltaB, deltaB, 0.5f);
+				}
+				add3f(global_scene.meshInstances[i]->pos, global_scene.meshInstances[i]->pos, deltaA);
+				add3f(global_scene.meshInstances[j]->pos, global_scene.meshInstances[j]->pos, deltaB);
+				// @TEMP: end collison response
+
+				//printf("penVector=%.3f %.3f %.3f\n", penVector[0], penVector[1], penVector[2]);
 			}
 		}
 	}
