@@ -1473,7 +1473,7 @@ void get_penetration_vector(float penVector[3], MeshInstance *objectA, MeshInsta
 						break;
 					}
 				}
-				if (ridgeIndex == -1) { printf("(get_penetration_vector): PANIC; RIDGE NOT FOUND: facetList[%d].points[%d//%d]\n", i, B, A); exit(-1); continue; }
+				if (ridgeIndex == -1) { printf("(get_penetration_vector): PANIC; RIDGE NOT FOUND: facetList[%d].points[%d//%d]\n", i, B, A); continue; }
 			}
 		}
 
@@ -2739,8 +2739,8 @@ void executeCollisions() {
 				// @TEMP: handle collision response here
 				float deltaA[3];
 				float deltaB[3];
-					set3fv(deltaB, penVector);
-					negate3f(deltaA, deltaB);
+				set3fv(deltaB, penVector);
+				negate3f(deltaA, deltaB);
 				if (i == 0) {
 					mult3f(deltaA, deltaA, 0.0f);
 					mult3f(deltaB, deltaB, 1.0f);
