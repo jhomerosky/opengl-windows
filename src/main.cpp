@@ -352,6 +352,14 @@ struct Ridge {
 	bool isActive;
 };
 
+// For objects A, B colliding, object A penetrates B along normal.
+// To separate, move A by (alpha)*(-normal) and B by (1-alpha)*normal, where alpha in [0,1].
+struct Collision {
+	int A;
+	int B;
+	float normal[3];
+};
+
 #pragma endregion STRUCTDEF 
 // ===== END STRUCT DEFINITIONS =====
 
@@ -1473,7 +1481,10 @@ void get_penetration_vector(float penVector[3], MeshInstance *objectA, MeshInsta
 						break;
 					}
 				}
-				if (ridgeIndex == -1) { printf("(get_penetration_vector): PANIC; RIDGE NOT FOUND: facetList[%d].points[%d//%d]\n", i, B, A); continue; }
+				if (ridgeIndex == -1) { 
+					printf("(get_penetration_vector(%s, %s)): PANIC; RIDGE NOT FOUND: facetList[%d].points[%d//%d]\n", hullA->name, hullB->name, i, B, A); 
+					continue; 
+				}
 			}
 		}
 
@@ -2121,7 +2132,7 @@ void updateScene(GLFWwindow *window, float deltaTime) {
 	float demoRotate[4] = {cosf(theta), 0.0f, sinf(theta), 0.0f};
 	active_instance = global_scene.meshInstances[0];
 	active_instance->pos[0] += deltaTime;
-	quat_mult_inplace(active_instance->rotation, demoRotate);
+	//quat_mult_inplace(active_instance->rotation, demoRotate);
 }
 
 void renderScene(GLFWwindow *window) {
@@ -2311,6 +2322,10 @@ void setDefaultScene() {
 		set3f(meshInstance->pos, i*spacing, 0.0f, 0.0f);
 		meshInstance->physics = 2;
 		addMeshInstanceToGlobalScene(meshInstance);
+
+		if (i == 0) {
+			set4f(meshInstance->rotation, 1.0f/sqrtf(2.0), 0.0f, 1.0f/sqrtf(2.0), 0.0f);
+		}
 	}
 
 	// ===== texture testing =====
@@ -2393,7 +2408,7 @@ void initOpenGL() {
 	glEnable(GL_DEPTH_TEST);  
 
 
-	glfwSwapInterval(0); // 0: disable vsync | 1: enable vsync
+	glfwSwapInterval(1); // 0: disable vsync | 1: enable vsync
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); // wireframe mode
 }
 
@@ -2713,6 +2728,7 @@ void executeConvexHulls() {
 		if (hull != nullptr) {
 			hullId = addMeshToGlobalPool(hull);
 			global_resource_pool.meshes[i]->hullId = hullId;
+			hull->name = global_resource_pool.meshes[i]->name;
 			global_resource_pool.meshes[i]->has_convex_hull = true;
 			uploadMeshBuffers(hull);
 		} else {
@@ -2723,6 +2739,9 @@ void executeConvexHulls() {
 
 // Orchestrate GJK intersection algorithm
 void executeCollisions() {
+	const int MAX_COLLISIONS = 256;
+	Collision collisions[MAX_COLLISIONS]; // @TODO: this bound is unlikely to be bad but not guaranteed
+	int num_collisions = 0;
 	for (int i = 0; i < global_scene.meshInstanceCount; i++) {
 		set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.5f, 0.0f);
 	}
@@ -2732,29 +2751,35 @@ void executeCollisions() {
 			Simplex simplex;
 			float penVector[3] = {0};
 			if (GJK_intersect(global_scene.meshInstances[i], global_scene.meshInstances[j], &simplex)) {
-				set3f(global_scene.meshInstances[i]->hullColor, 1.0f, 0.0f, 0.0f);
-				set3f(global_scene.meshInstances[j]->hullColor, 1.0f, 0.0f, 0.0f);
-				get_penetration_vector(penVector, global_scene.meshInstances[i], global_scene.meshInstances[j], &simplex);
-				
-				// @TEMP: handle collision response here
-				float deltaA[3];
-				float deltaB[3];
-				set3fv(deltaB, penVector);
-				negate3f(deltaA, deltaB);
-				if (i == 0) {
-					mult3f(deltaA, deltaA, 0.0f);
-					mult3f(deltaB, deltaB, 1.0f);
-				} else {
-					mult3f(deltaA, deltaA, 0.5f);
-					mult3f(deltaB, deltaB, 0.5f);
-				}
-				add3f(global_scene.meshInstances[i]->pos, global_scene.meshInstances[i]->pos, deltaA);
-				add3f(global_scene.meshInstances[j]->pos, global_scene.meshInstances[j]->pos, deltaB);
-				// @TEMP: end collison response
-
-				//printf("penVector=%.3f %.3f %.3f\n", penVector[0], penVector[1], penVector[2]);
+				assert(num_collisions < MAX_COLLISIONS);
+				collisions[num_collisions].A = i;
+				collisions[num_collisions].B = j;
+				get_penetration_vector(collisions[num_collisions].normal, global_scene.meshInstances[i], global_scene.meshInstances[j], &simplex);
+				num_collisions++;
 			}
 		}
+	}
+	// handle collision response
+	for (int i = 0; i < num_collisions; i++) {
+		int A = collisions[i].A;
+		int B = collisions[i].B;
+		float deltaA[3];
+		float deltaB[3];
+		set3f(global_scene.meshInstances[A]->hullColor, 1.0f, 0.0f, 0.0f);
+		set3f(global_scene.meshInstances[B]->hullColor, 1.0f, 0.0f, 0.0f);
+		negate3f(deltaA, collisions[i].normal);
+		set3fv(deltaB, collisions[i].normal);
+		if (A == 0) { // for collision demo, teapot will not be pushed
+			mult3f(deltaA, deltaA, 0.0f);
+			mult3f(deltaB, deltaB, 1.0f);
+		} else {
+			mult3f(deltaA, deltaA, 0.5f);
+			mult3f(deltaB, deltaB, 0.5f);
+		}
+		// @TODO: implement impulse
+		add3f(global_scene.meshInstances[A]->pos, global_scene.meshInstances[A]->pos, deltaA);
+		add3f(global_scene.meshInstances[B]->pos, global_scene.meshInstances[B]->pos, deltaB);
+		//printf("penVector=%.3f %.3f %.3f\n", penVector[0], penVector[1], penVector[2]);
 	}
 }
 // ===== END ALGORITHM HANDLERS =====
@@ -2822,9 +2847,9 @@ int main(int argc, char **argv) {
 	// ================ RENDER LOOP ===================
 	Metrics metrics;
 	initMetrics(&metrics);
-	char title[256]; // window title
-    const char *glVersion = (const char*)glGetString(GL_VERSION); // driver info
-    const char *glRenderer = (const char*)glGetString(GL_RENDERER); // gpu info
+	char title[256];
+    const char *glVersion = (const char*)glGetString(GL_VERSION);
+    const char *glRenderer = (const char*)glGetString(GL_RENDERER);
 	printf("Begin render loop\n");
 	while (!glfwWindowShouldClose(window)) {
 		updateTime(&metrics);
