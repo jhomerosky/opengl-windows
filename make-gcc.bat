@@ -1,4 +1,5 @@
 @echo off
+REM === THIS FILE IS OUTDATED; SEE make.bat FOR UPDATED BUILD INSTRUCTIONS ===
 REM Calls g++.exe directly from MinGW
 REM @TODO: For Windows we should probably use MSVC.
 REM I started out a bit frustrated with build patterns for C and C++ on Windows, but I need to get over it.

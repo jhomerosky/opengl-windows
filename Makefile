@@ -1,4 +1,5 @@
 # Linux/WSL: native g++ compilation, not fully tested yet for Linux
+# === THIS FILE IS OUTDATED; SEE make.bat FOR UPDATED BUILD INSTRUCTIONS ===
 
 CC := g++
 CXXFLAGS := -g -std=c++17 -fopenmp
