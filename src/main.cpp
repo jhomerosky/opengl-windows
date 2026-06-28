@@ -32,7 +32,7 @@ struct Camera;
 struct MouseInfo;
 struct LightSource;
 struct Scene;
-struct ResourcePool;
+struct ResourceStore;
 struct Metrics;
 
 // lifted structs
@@ -49,7 +49,7 @@ struct Facet;
 void free_mesh(Mesh *mesh);
 void free_shader(Shader *shader);
 void free_scene(Scene *scene);
-void free_resource_pool(ResourcePool *pool);
+void free_resource_store(ResourceStore *store);
 
 // callbacks
 void framebuffer_size_callback(GLFWwindow *window, int width, int height);
@@ -83,9 +83,9 @@ GLuint loadShader(char *vertexShaderSource, char *fragmentShaderSource);
 
 // register
 int addMeshInstanceToGlobalScene(MeshInstance *meshInstance);
-int addMeshToGlobalPool(Mesh *mesh);
-int addTextureToGlobalPool(Texture *texture);
-int addShaderToGlobalPool(Shader *shader);
+int addMeshToGlobalStore(Mesh *mesh);
+int addTextureToGlobalStore(Texture *texture);
+int addShaderToGlobalStore(Shader *shader);
 void uploadMeshBuffers(const Mesh *mesh);
 
 // ????
@@ -113,7 +113,7 @@ void initMesh(Mesh *mesh);
 void initShaders();
 void initSkybox(Skybox *skybox);
 void initGlobalScene();
-void initGlobalResourcePool();
+void initGlobalResourceStore();
 void initMeshes();
 void initTextures();
 void initShaders();
@@ -123,7 +123,7 @@ void executeConvexHulls();
 void executeCollisions();
 
 // print
-void printGlobalResourcePool();
+void printGlobalResourceStore();
 // ===== END FORWARD DECLARATIONS ====
 
 // ===== STRUCT DEFINITIONS =====
@@ -153,7 +153,7 @@ struct Mesh {
 	bool has_texture_coords;
 
 	bool has_convex_hull;
-	int hullId; // -1 if we are a hull, otherwise point into global mesh pool
+	int hullId; // -1 if we are a hull, otherwise point into global mesh store
 
 	char *name; // string name to recognize the hull
 
@@ -271,8 +271,8 @@ struct Scene {
 	MouseInfo mouse;
 };
 
-// ResourcePool is meant to be a store of assets with IDs for MeshInstances to reference
-struct ResourcePool {
+// ResourceStore is meant to be a store of assets with IDs for MeshInstances to reference
+struct ResourceStore {
 	Mesh *meshes[__MAX_MESHES__];
 	int meshCount;
 
@@ -282,14 +282,14 @@ struct ResourcePool {
 	Shader *shaders[__MAX_SHADERS__];
 	int shaderCount;
 	
-	// @TODO: add textures here? Or have 2 resourcePools?
-	// ResourcePool globalMeshPool;
-	// ResourcePool globalTexturePool;
+	// @TODO: add textures here? Or have 2 ResourceStores?
+	// ResourceStore globalMeshStore;
+	// ResourceStore globalTextureStore;
 	// VS
-	// ResourcePool { Mesh *meshes[]; Texture *textures[]; }
+	// ResourceStore { Mesh *meshes[]; Texture *textures[]; }
 
 	// @TODO?: map string name --> resourceID
-	// Why should this pool own a map to its resources?
+	// Why should this store own a map to its resources?
 	// The index is already an ID for the array. 
 	//ResourceMap meshMap;
 };
@@ -302,6 +302,7 @@ struct Metrics {
 	float fpsWindowTimeStart;
 	float fpsWindowTimeEnd;
 	float heartBeat;
+	float timeScale;
 	unsigned int frameCount;
 	int FRAMES_TO_COUNT;
 	float fps;
@@ -364,8 +365,9 @@ struct Collision {
 // ===== END STRUCT DEFINITIONS =====
 
 // ===== GLOBAL VARS =====
-ResourcePool global_resource_pool;
+ResourceStore global_resource_store;
 Scene global_scene;
+Metrics global_metrics;
 // ===== END GLOBAL VARS =====
 
 // ===== CUSTOM DEALLOCATORS =====
@@ -393,15 +395,15 @@ void free_scene(Scene *scene) {
 	}
 }
 
-void free_resource_pool(ResourcePool *pool) {
-	for (int i = 0; i < pool->meshCount; i++) {
-		free_mesh(pool->meshes[i]);
+void free_resource_store(ResourceStore *store) {
+	for (int i = 0; i < store->meshCount; i++) {
+		free_mesh(store->meshes[i]);
 	}
-	for (int i = 0; i < pool->textureCount; i++) {
-		free_texture(pool->textures[i]);
+	for (int i = 0; i < store->textureCount; i++) {
+		free_texture(store->textures[i]);
 	}
-	for (int i = 0; i < pool->shaderCount; i++) {
-		free_shader(pool->shaders[i]);
+	for (int i = 0; i < store->shaderCount; i++) {
+		free_shader(store->shaders[i]);
 	}
 }
 // ===== END CUSTOM DEALLOCATORS =====
@@ -1129,10 +1131,10 @@ int support(const Mesh *mesh, const float dir[3], const float transform[9]) {
 // returns: true if mesh instances collide; false otherwise
 bool GJK_intersect(MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex) {
 	// @NOTE: this can be done without a convex hull, but it's very expensive
-	if (!global_resource_pool.meshes[objectA->globalMeshId]->has_convex_hull) return false;
-	if (!global_resource_pool.meshes[objectB->globalMeshId]->has_convex_hull) return false;
-	Mesh *hullA = global_resource_pool.meshes[global_resource_pool.meshes[objectA->globalMeshId]->hullId];
-	Mesh *hullB = global_resource_pool.meshes[global_resource_pool.meshes[objectB->globalMeshId]->hullId];
+	if (!global_resource_store.meshes[objectA->globalMeshId]->has_convex_hull) return false;
+	if (!global_resource_store.meshes[objectB->globalMeshId]->has_convex_hull) return false;
+	Mesh *hullA = global_resource_store.meshes[global_resource_store.meshes[objectA->globalMeshId]->hullId];
+	Mesh *hullB = global_resource_store.meshes[global_resource_store.meshes[objectB->globalMeshId]->hullId];
 
 	float modelA[16];
 	float transformA[9];
@@ -1310,10 +1312,10 @@ bool GJK_intersect(MeshInstance *objectA, MeshInstance *objectB, Simplex *simple
 //   If the resulting point is within epsilon of the current nearest point, then this point is the penetration vector
 //   Otherwise, expand the object to this new point like with the quickhull algorithm.
 void get_penetration_vector(float penVector[3], MeshInstance *objectA, MeshInstance *objectB, Simplex *simplex) {
-	if (!global_resource_pool.meshes[objectA->globalMeshId]->has_convex_hull) return;
-	if (!global_resource_pool.meshes[objectB->globalMeshId]->has_convex_hull) return;
-	Mesh *hullA = global_resource_pool.meshes[global_resource_pool.meshes[objectA->globalMeshId]->hullId];
-	Mesh *hullB = global_resource_pool.meshes[global_resource_pool.meshes[objectB->globalMeshId]->hullId];
+	if (!global_resource_store.meshes[objectA->globalMeshId]->has_convex_hull) return;
+	if (!global_resource_store.meshes[objectB->globalMeshId]->has_convex_hull) return;
+	Mesh *hullA = global_resource_store.meshes[global_resource_store.meshes[objectA->globalMeshId]->hullId];
+	Mesh *hullB = global_resource_store.meshes[global_resource_store.meshes[objectB->globalMeshId]->hullId];
 	
 	float modelA[16];
 	float transformA[9];
@@ -1933,24 +1935,24 @@ int addMeshInstanceToGlobalScene(MeshInstance *meshInstance) {
 }
 
 // register mesh; returns Id of registered mesh
-int addMeshToGlobalPool(Mesh *mesh) {
-	if (global_resource_pool.meshCount != __MAX_MESHES__)
-		global_resource_pool.meshes[global_resource_pool.meshCount++] = mesh;
-	return global_resource_pool.meshCount - 1;
+int addMeshToGlobalStore(Mesh *mesh) {
+	if (global_resource_store.meshCount != __MAX_MESHES__)
+		global_resource_store.meshes[global_resource_store.meshCount++] = mesh;
+	return global_resource_store.meshCount - 1;
 }
 
 // register texture
-int addTextureToGlobalPool(Texture *texture) {
-	if (global_resource_pool.textureCount != __MAX_TEXTURES__)
-		global_resource_pool.textures[global_resource_pool.textureCount++] = texture;
-	return global_resource_pool.textureCount - 1;
+int addTextureToGlobalStore(Texture *texture) {
+	if (global_resource_store.textureCount != __MAX_TEXTURES__)
+		global_resource_store.textures[global_resource_store.textureCount++] = texture;
+	return global_resource_store.textureCount - 1;
 }
 
 // register shader
-int addShaderToGlobalPool(Shader *shader) {
-	if (global_resource_pool.shaderCount != __MAX_SHADERS__)
-		global_resource_pool.shaders[global_resource_pool.shaderCount++] = shader;
-	return global_resource_pool.shaderCount - 1;
+int addShaderToGlobalStore(Shader *shader) {
+	if (global_resource_store.shaderCount != __MAX_SHADERS__)
+		global_resource_store.shaders[global_resource_store.shaderCount++] = shader;
+	return global_resource_store.shaderCount - 1;
 }
 
 // Upload mesh to the GPU
@@ -2082,14 +2084,22 @@ void processInput(GLFWwindow *window, float deltaTime) {
 	if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
 		rotateCamera(window, camera->PAN_SPEED * deltaTime, 0.0f);
 	}
+
+	if (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS) {
+		global_metrics.timeScale = 10.0f;
+	}
+
+	if (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_RELEASE) {
+		global_metrics.timeScale = 1.0f;
+	}
 }
 
 // calculate deltaTime, FPS, etc
 void updateTime(Metrics *metrics) {
 	metrics->lastTime = metrics->currTime;
 	metrics->currTime = glfwGetTime();
-	metrics->deltaTime = metrics->currTime - metrics->lastTime;
-	metrics->heartBeat += metrics->deltaTime;
+	metrics->deltaTime = (metrics->currTime - metrics->lastTime) * metrics->timeScale;
+	metrics->heartBeat += metrics->currTime - metrics->lastTime;
 
 	// fps counter implementation
 	metrics->frameCount = (metrics->frameCount + 1) % metrics->FRAMES_TO_COUNT;
@@ -2146,8 +2156,8 @@ void renderScene(GLFWwindow *window) {
 
 	// @NOTE: hardcoding the shader locations here for now
 	// this means we are doing that string lookup every frame when we shouldn't need to
-	unsigned int basicShader = global_resource_pool.shaders[0]->shaderID;
-	unsigned int skyboxShader = global_resource_pool.shaders[1]->shaderID;
+	unsigned int basicShader = global_resource_store.shaders[0]->shaderID;
+	unsigned int skyboxShader = global_resource_store.shaders[1]->shaderID;
 
 	// basic shader uniforms
 	unsigned int modelColorLoc = glGetUniformLocation(basicShader, "modelColor");
@@ -2183,7 +2193,7 @@ void renderScene(GLFWwindow *window) {
 	for (int i = 0; i < global_scene.meshInstanceCount; i++) {
 		MeshInstance *meshInstance = global_scene.meshInstances[i];
 		if (meshInstance == nullptr || meshInstance->globalMeshId < 0) continue;
-		Mesh *mesh = global_resource_pool.meshes[meshInstance->globalMeshId];
+		Mesh *mesh = global_resource_store.meshes[meshInstance->globalMeshId];
 		if (mesh == nullptr) continue;
 		// Bind the VAO (restores all attribute and buffer settings)
 		glBindVertexArray(mesh->VAO);
@@ -2212,7 +2222,7 @@ void renderScene(GLFWwindow *window) {
 		// upload texture to the shader
 		glActiveTexture(GL_TEXTURE0);
 		if (mesh->has_texture_coords && meshInstance->has_texture) {
-			glBindTexture(GL_TEXTURE_2D, global_resource_pool.textures[meshInstance->globalTextureId]->textureID);
+			glBindTexture(GL_TEXTURE_2D, global_resource_store.textures[meshInstance->globalTextureId]->textureID);
 			glUniform1i(hasTextureLoc, true);
 		} else {
 			glUniform1i(hasTextureLoc, false);
@@ -2230,12 +2240,12 @@ void renderScene(GLFWwindow *window) {
 			// error checking
 			MeshInstance *meshInstance = global_scene.meshInstances[i];
 			if (meshInstance == nullptr || meshInstance->globalMeshId < 0) continue;
-			Mesh *mesh = global_resource_pool.meshes[meshInstance->globalMeshId];
+			Mesh *mesh = global_resource_store.meshes[meshInstance->globalMeshId];
 			if (!mesh->has_convex_hull) { printf("missing convex hull for mesh %d\n", meshInstance->globalMeshId); continue; } // mesh does not have a hull
 			if (!mesh->hullId == -1) { printf("meshInstance[%d] is directly referencing a hull!\n", i); continue; } // somehow a meshInstance is directly using a hull as it's mesh
 			
 			// get hull
-			Mesh *hull = global_resource_pool.meshes[mesh->hullId];
+			Mesh *hull = global_resource_store.meshes[mesh->hullId];
 			if (hull->hullId != -1) { printf("mesh->hullId (%d) is not a hull!\n", mesh->hullId); continue; } // the hull mesh is not a hull
 
 			// Bind the VAO (restores all attribute and buffer settings)
@@ -2316,7 +2326,7 @@ void setDefaultMeshInstance(MeshInstance *meshInstance, const int resourceId) {
 void setDefaultScene() {
 	// row 1 of each mesh
 	const float spacing = 10;
-	for (int i = 0; i < global_resource_pool.meshCount; i++) {
+	for (int i = 0; i < global_resource_store.meshCount; i++) {
 		MeshInstance *meshInstance = (MeshInstance*)malloc(sizeof(MeshInstance));
 		setDefaultMeshInstance(meshInstance, i);
 		set3f(meshInstance->pos, i*spacing, 0.0f, 0.0f);
@@ -2356,7 +2366,7 @@ void setDefaultScene() {
 	}
 	stbi_image_free(textureData);
 	libertyTexture->textureID = texture;
-	int textureId = addTextureToGlobalPool(libertyTexture);
+	int textureId = addTextureToGlobalStore(libertyTexture);
 	liberty->globalTextureId = textureId;
 	liberty->has_texture = true;
 	// END TEXTURE TESTING
@@ -2375,12 +2385,12 @@ void setDefaultScene() {
 	// // physics entities
 	// int num_teapots = 1 << 5;
 	// const float spacing = 10;
-	// MeshInstance *instancePool = (MeshInstance*)malloc(sizeof(MeshInstance) * num_teapots);
+	// MeshInstance *instanceStore = (MeshInstance*)malloc(sizeof(MeshInstance) * num_teapots);
 	// for (int i = 0; i < num_teapots; i++) {
-	// 	setDefaultMeshInstance(&instancePool[i], 0);
-	// 	set3f(instancePool[i].pos, spacing*randf(), spacing*randf() + 50.0f, spacing*randf());
-	// 	addMeshInstanceToGlobalScene(&instancePool[i]);
-	// 	instancePool[i].physics = 3;
+	// 	setDefaultMeshInstance(&instanceStore[i], 0);
+	// 	set3f(instanceStore[i].pos, spacing*randf(), spacing*randf() + 50.0f, spacing*randf());
+	// 	addMeshInstanceToGlobalScene(&instanceStore[i]);
+	// 	instanceStore[i].physics = 3;
 	// }
 
 	// light source
@@ -2451,6 +2461,7 @@ void initMetrics(Metrics *metrics) {
 	metrics->heartBeat = 0.0f;
 	metrics->frameCount = 0;
 	metrics->FRAMES_TO_COUNT = 60;
+	metrics->timeScale = 1.0f;
 }
 
 // builds (no malloc) default mesh including VAO,VBO,EBO objects
@@ -2496,7 +2507,7 @@ void initMesh(Mesh *mesh) {
 	glBindVertexArray(0);
 }
 
-// load, compile, malloc, register shaders to the global resource pool
+// load, compile, malloc, register shaders to the global resource store
 // for now this hardcodes the shaders with ID
 void initShaders() {
 	//////////////////////////////////////////////
@@ -2509,14 +2520,14 @@ void initShaders() {
 	unsigned int basicShader = loadShader("src/shaders/basicShader.vs", "src/shaders/basicShader.fs");
 	unsigned int skyboxShader = loadShader("src/shaders/skyboxShader.vs", "src/shaders/skyboxShader.fs");
 
-	// @TODO: learn how to pool these resources correctly
+	// @TODO: learn how to store these resources correctly
 	Shader *shader0 = (Shader*)calloc(1, sizeof(Shader));
 	shader0->shaderID = basicShader;
-	addShaderToGlobalPool(shader0);
+	addShaderToGlobalStore(shader0);
 
 	Shader *shader1 = (Shader*)calloc(1, sizeof(Shader));
 	shader1->shaderID = skyboxShader;
-	addShaderToGlobalPool(shader1);
+	addShaderToGlobalStore(shader1);
 
 	// @TODO: get locations to shader uniforms
 	//       if we enhance shader struct to dynamically use these,
@@ -2527,7 +2538,7 @@ void initShaders() {
 }
 
 // Load skybox images from file, initialize GL cubemap object, define skybox vertices, initialize skybox VAO/VBO, upload vertices to GPU
-// @TODO: Clean up; skybox loads from file can go to global pool; etc
+// @TODO: Clean up; skybox loads from file can go to global store; etc
 // NOTE: jpg/png loading is too slow. ~100ms per file. TGA increased file size which kept load times about the same.
 //       for now we just load the images in parallel for ~170ms total
 void initSkybox(Skybox *skybox) {
@@ -2643,18 +2654,18 @@ void initGlobalScene() {
 	global_scene.windowHeight = 0;
 }
 
-void initGlobalResourcePool() {
-	global_resource_pool.meshCount = 0;
-	global_resource_pool.textureCount = 0;
-	global_resource_pool.shaderCount = 0;
+void initGlobalResourceStore() {
+	global_resource_store.meshCount = 0;
+	global_resource_store.textureCount = 0;
+	global_resource_store.shaderCount = 0;
 }
 
 // for each item in the hardcoded filename list:
 //     1. malloc+init a new mesh
 //     2. malloc mesh fields and load data from file
-//     3. register mesh to resource pool list
+//     3. register mesh to resource store list
 //     4. upload mesh data to GPU buffers
-// return total count of meshes in resource pool
+// return total count of meshes in resource store
 void initMeshes() {
 	const char *list_of_meshes[] = {
 		"resources/mesh/teapot.obj"
@@ -2680,7 +2691,7 @@ void initMeshes() {
 		printf("loading mesh from file: %s...", list_of_meshes[i]);
 		tic();
 		if (!malloc_mesh_fields_from_obj_file(list_of_meshes[i], mesh)) { 
-			printf(" | ERROR: malloc_mesh_fields_from_obj_file returned 0 in initGlobalResourcePoolMallocMeshAndMeshFields for mesh %s\n", mesh->name);
+			printf(" | ERROR: malloc_mesh_fields_from_obj_file returned 0 in initGlobalResourceStoreMallocMeshAndMeshFields for mesh %s\n", mesh->name);
 			continue; 
 		}
 		printf("(%.3f ms)\n", toc());
@@ -2704,7 +2715,7 @@ void initMeshes() {
 		//   We probably shouldn't mutate resources unless specifically saved from the program, except maybe as one-time processing.
 		//   Maybe we write a new function to serialize the whole mesh (with vnormal) back.
 		printf("  >> v: %d | f: %d\n", mesh->num_vertices, mesh->num_faces);
-		addMeshToGlobalPool(mesh);
+		addMeshToGlobalStore(mesh);
 		uploadMeshBuffers(mesh);
 	}
 }
@@ -2719,17 +2730,17 @@ void initTextures() {
 void executeConvexHulls() {
 	printf("executeConvexHulls:\n");
 	Mesh *hull;
-	const int meshCountBeforeHulls = global_resource_pool.meshCount;
+	const int meshCountBeforeHulls = global_resource_store.meshCount;
 	unsigned int hullId;
 	for (int i = 0; i < meshCountBeforeHulls; i++) {
 		tic();
-		hull = makeConvexHull(global_resource_pool.meshes[i]);
-		printf("  >> convex hull in %.3f ms for %s\n", toc(), global_resource_pool.meshes[i]->name);
+		hull = makeConvexHull(global_resource_store.meshes[i]);
+		printf("  >> convex hull in %.3f ms for %s\n", toc(), global_resource_store.meshes[i]->name);
 		if (hull != nullptr) {
-			hullId = addMeshToGlobalPool(hull);
-			global_resource_pool.meshes[i]->hullId = hullId;
-			hull->name = global_resource_pool.meshes[i]->name;
-			global_resource_pool.meshes[i]->has_convex_hull = true;
+			hullId = addMeshToGlobalStore(hull);
+			global_resource_store.meshes[i]->hullId = hullId;
+			hull->name = global_resource_store.meshes[i]->name;
+			global_resource_store.meshes[i]->has_convex_hull = true;
 			uploadMeshBuffers(hull);
 		} else {
 			printf("  ERROR: makeConvexHull(meshes[%d]) returned nullptr\n", i);
@@ -2785,15 +2796,15 @@ void executeCollisions() {
 // ===== END ALGORITHM HANDLERS =====
 
 // ===== PRINT FUNCTIONS =====
-// print the global resource pool for debugging
-void printGlobalResourcePool() {
-	printf("global_resource_pool looks like:\n");
-	printf("  >> num_meshes = %d\n", global_resource_pool.meshCount);
-	for (int i = 0; i < global_resource_pool.meshCount; i++) {
-		printf("  meshes[%d] f: %zu v: %zu", i, global_resource_pool.meshes[i]->num_faces, global_resource_pool.meshes[i]->num_vertices);
-		if (global_resource_pool.meshes[i]->has_convex_hull) {
-			printf(" | HAS HULLID: %d", global_resource_pool.meshes[i]->hullId);
-		} else if (global_resource_pool.meshes[i]->hullId == -1) {
+// print the global resource store for debugging
+void printGlobalResourceStore() {
+	printf("global_resource_store looks like:\n");
+	printf("  >> num_meshes = %d\n", global_resource_store.meshCount);
+	for (int i = 0; i < global_resource_store.meshCount; i++) {
+		printf("  meshes[%d] f: %zu v: %zu", i, global_resource_store.meshes[i]->num_faces, global_resource_store.meshes[i]->num_vertices);
+		if (global_resource_store.meshes[i]->has_convex_hull) {
+			printf(" | HAS HULLID: %d", global_resource_store.meshes[i]->hullId);
+		} else if (global_resource_store.meshes[i]->hullId == -1) {
 			printf(" | IS HULL");
 		}
 		printf("\n");
@@ -2825,7 +2836,7 @@ int main(int argc, char **argv) {
 	// ========================= SCENE SETUP =========================
 	gl_timer scene_setup_timer = get_gl_timer();
 	initGlobalScene();
-	initGlobalResourcePool();
+	initGlobalResourceStore();
 	initMeshes();
 	initTextures();
 	initShaders();
@@ -2845,25 +2856,24 @@ int main(int argc, char **argv) {
 
 
 	// ================ RENDER LOOP ===================
-	Metrics metrics;
-	initMetrics(&metrics);
+	initMetrics(&global_metrics);
 	char title[256];
     const char *glVersion = (const char*)glGetString(GL_VERSION);
     const char *glRenderer = (const char*)glGetString(GL_RENDERER);
 	printf("Begin render loop\n");
 	while (!glfwWindowShouldClose(window)) {
-		updateTime(&metrics);
-		processInput(window, metrics.deltaTime);
-		updateScene(window, metrics.deltaTime); // @TODO: separate systems? i.e. updatePhysics(), updateAnim(), ...
+		updateTime(&global_metrics);
+		processInput(window, global_metrics.deltaTime);
+		updateScene(window, global_metrics.deltaTime); // @TODO: separate systems? i.e. updatePhysics(), updateAnim(), ...
 		renderScene(window);
 		glfwSwapBuffers(window);
 		glfwPollEvents();
  
 		// run this every ~1 second
-		if (metrics.heartBeat > 1.0f) {
-			snprintf(title, sizeof(title), "[FPS: %.2f] GLFW OpenGL - %s - %s", metrics.fps, glVersion, glRenderer);
+		if (global_metrics.heartBeat > 1.0f) {
+			snprintf(title, sizeof(title), "[FPS: %.2f] GLFW OpenGL - %s - %s", global_metrics.fps, glVersion, glRenderer);
 			glfwSetWindowTitle(window, title);
-			metrics.heartBeat = 0.0f;
+			global_metrics.heartBeat = 0.0f;
 		}
 	}
 	// ================ END RENDER LOOP ===================
@@ -2873,7 +2883,7 @@ int main(int argc, char **argv) {
 	// ================ CLEANUP ===================
 	gl_timer cleanup_timer = get_gl_timer();
 	free_scene(&global_scene);
-	free_resource_pool(&global_resource_pool);
+	free_resource_store(&global_resource_store);
     glfwDestroyWindow(window);
 	gl_timer_println(&cleanup_timer, "cleanup");
 	// ================ END CLEANUP ===================
